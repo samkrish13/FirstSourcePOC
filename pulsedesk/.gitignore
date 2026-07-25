@@ -1,0 +1,33 @@
+# Secrets & local env — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+service_account*.json
+
+# Streamlit / Google
+.streamlit/secrets.toml
+!.streamlit/config.toml
+!.streamlit/secrets.toml.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# Local SQLite (regenerated at runtime)
+*.db
+data/*.db
+data/.write_test
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/

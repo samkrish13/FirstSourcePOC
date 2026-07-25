@@ -1,0 +1,28 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+.streamlit/secrets.toml
+
+# Local databases
+*.db
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Optional local archives
+_archive/

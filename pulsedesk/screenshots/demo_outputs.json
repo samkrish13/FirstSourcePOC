@@ -1,0 +1,452 @@
+[
+  {
+    "sample_id": "REQ-001",
+    "expected_branch": "billing_dispute",
+    "classified_as": "billing_dispute",
+    "classification_ok": true,
+    "case_id": "CASE-REQ-001",
+    "needs_review": false,
+    "confidence": 0.97,
+    "action_types": [
+      "create_ticket",
+      "draft_response",
+      "route_to_team",
+      "schedule_follow_up",
+      "set_provisional_hold",
+      "set_resolved_status"
+    ],
+    "steps": [
+      {
+        "action_type": "set_provisional_hold",
+        "detail": "Provisional billing hold set on ACC-784512 for \u20b91,299"
+      },
+      {
+        "action_type": "create_ticket",
+        "detail": "Created P2 ticket BIL-1001 in Billing: Billing dispute for ACC-784512 amount=\u20b91,299 invoice=INV-MAR-784512"
+      },
+      {
+        "action_type": "route_to_team",
+        "detail": "Routed to Billing: Dispute requires Billing queue ownership"
+      },
+      {
+        "action_type": "schedule_follow_up",
+        "detail": "48h status follow-up on dispute BIL-1001 for ACC-784512"
+      },
+      {
+        "action_type": "draft_response",
+        "detail": "Generated formal acknowledgment email"
+      },
+      {
+        "action_type": "set_resolved_status",
+        "detail": "Resolved status log \u2192 open_in_queue (Billing dispute BIL-1001)"
+      }
+    ],
+    "ticket_id": "BIL-1001",
+    "queue": "Billing",
+    "summary": "Opened BIL-1001, set provisional hold for \u20b91,299, routed to Billing, scheduled 48h follow-up.",
+    "email_draft": "Dear Customer,\n\nThank you for contacting us about the billing concern on ACC-784512. We have opened ticket BIL-1001 and placed a provisional hold while Billing reviews \u20b91,299. You will receive an update within 48 hours.\n\nRegards,\nPulseDesk Billing Care"
+  },
+  {
+    "sample_id": "REQ-002",
+    "expected_branch": "service_outage",
+    "classified_as": "service_outage",
+    "classification_ok": true,
+    "case_id": "CASE-REQ-002",
+    "needs_review": false,
+    "confidence": 0.97,
+    "action_types": [
+      "draft_response",
+      "match_outage",
+      "route_to_team",
+      "set_resolved_status",
+      "set_sla_clock"
+    ],
+    "steps": [
+      {
+        "action_type": "match_outage",
+        "detail": "Matched bulletin OUT-2026-071 \u2014 Indiranagar / Bangalore East (560038, 560008)"
+      },
+      {
+        "action_type": "set_sla_clock",
+        "detail": "SLA flag set (major), due in 4h"
+      },
+      {
+        "action_type": "route_to_team",
+        "detail": "Routed to Network Comms: Matched active bulletin OUT-2026-071"
+      },
+      {
+        "action_type": "draft_response",
+        "detail": "Generated outage/status response email"
+      },
+      {
+        "action_type": "set_resolved_status",
+        "detail": "Resolved status log \u2192 open_in_queue (Network Network Comms; SLA flag active)"
+      }
+    ],
+    "ticket_id": null,
+    "queue": "Network Comms",
+    "summary": "Matched bulletin OUT-2026-071; routed Network Comms; SLA clock ~4h ETA.",
+    "email_draft": "Dear Customer,\n\nWe matched an active network event (OUT-2026-071) for ACC-901233. Estimated restoration is about 4 hours. Workaround: Use Wi-Fi calling where available; 3G fallback may be intermittent. Prefer SMS for urgent OTP.\n\nWe will notify you when service is restored.\n\nRegards,\nPulseDesk Network Care"
+  },
+  {
+    "sample_id": "REQ-003",
+    "expected_branch": "complaint_escalation",
+    "classified_as": "complaint_escalation",
+    "classification_ok": true,
+    "case_id": "CASE-REQ-003",
+    "needs_review": false,
+    "confidence": 0.97,
+    "action_types": [
+      "create_ticket",
+      "draft_response",
+      "notify_lead",
+      "route_to_team",
+      "set_callback",
+      "set_resolved_status",
+      "supervisor_alert"
+    ],
+    "steps": [
+      {
+        "action_type": "create_ticket",
+        "detail": "Created P1 ticket RET-1002 in Retention: Escalation / retention risk for ACC-556701"
+      },
+      {
+        "action_type": "notify_lead",
+        "detail": "Supervisor alert \u2014 notified Team Lead via slack"
+      },
+      {
+        "action_type": "supervisor_alert",
+        "detail": "Supervisor alert dispatched via slack+email"
+      },
+      {
+        "action_type": "route_to_team",
+        "detail": "Routed to Retention / Team Lead: Dissatisfied customer escalation \u2014 senior ownership required"
+      },
+      {
+        "action_type": "set_callback",
+        "detail": "Same-day Team Lead callback for RET-1002"
+      },
+      {
+        "action_type": "set_resolved_status",
+        "detail": "Resolved status log \u2192 open_escalated (P1 RET-1002; auto-resolution paused for senior ownership)"
+      },
+      {
+        "action_type": "draft_response",
+        "detail": "Generated empathy + recovery response"
+      }
+    ],
+    "ticket_id": "RET-1002",
+    "queue": "Retention / Team Lead",
+    "summary": "Raised P1 case RET-1002, notified Team Lead, set same-day callback.",
+    "email_draft": "Dear Customer,\n\nI am sorry for the experience you described. We have raised Priority-1 retention case RET-1002 for ACC-556701. A Team Lead will call you today.\n\nRegards,\nPulseDesk Customer Care Leadership"
+  },
+  {
+    "sample_id": "REQ-004",
+    "expected_branch": "sim_port",
+    "classified_as": "sim_port",
+    "classification_ok": true,
+    "case_id": "CASE-REQ-004",
+    "needs_review": false,
+    "confidence": 0.97,
+    "action_types": [
+      "create_ticket",
+      "draft_response",
+      "identity_checklist",
+      "route_to_team",
+      "schedule_follow_up",
+      "set_resolved_status"
+    ],
+    "steps": [
+      {
+        "action_type": "identity_checklist",
+        "detail": "Identity checklist passed for ACC-334890: Store eKYC present"
+      },
+      {
+        "action_type": "create_ticket",
+        "detail": "Created P2 ticket SIM-1003 in Port/SIM: SIM/port activation for ACC-334890 UPC=847291 kit=SIM-77821"
+      },
+      {
+        "action_type": "route_to_team",
+        "detail": "Routed to Port/SIM: MNP/SIM activation requires Port/SIM queue ownership"
+      },
+      {
+        "action_type": "schedule_follow_up",
+        "detail": "24h port/activation status follow-up for SIM-1003"
+      },
+      {
+        "action_type": "draft_response",
+        "detail": "Generated port/activation status email"
+      },
+      {
+        "action_type": "set_resolved_status",
+        "detail": "Resolved status log \u2192 open_in_queue (Port/SIM SIM-1003)"
+      }
+    ],
+    "ticket_id": "SIM-1003",
+    "queue": "Port/SIM",
+    "summary": "Identity checklist for ACC-334890; opened SIM-1003; routed Port/SIM; 24h status follow-up.",
+    "email_draft": "Dear Customer,\n\nWe have logged Port/SIM ticket SIM-1003 for ACC-334890 and completed an identity checklist review. We will update you on activation/port status within 24 hours.\n\nRegards,\nPulseDesk Port & SIM Desk"
+  },
+  {
+    "sample_id": "REQ-005",
+    "expected_branch": "plan_change",
+    "classified_as": "plan_change",
+    "classification_ok": true,
+    "case_id": "CASE-REQ-005",
+    "needs_review": false,
+    "confidence": 0.97,
+    "action_types": [
+      "catalog_quote",
+      "create_ticket",
+      "draft_response",
+      "eligibility_check",
+      "route_to_team",
+      "schedule_follow_up",
+      "set_resolved_status"
+    ],
+    "steps": [
+      {
+        "action_type": "eligibility_check",
+        "detail": "Plan change eligibility eligible for ACC-112045: No outstanding dues flagged"
+      },
+      {
+        "action_type": "catalog_quote",
+        "detail": "Catalog quote: Unlimited 999 \u2192 Family 499 (Unlimited 999 \u2192 Family 499)"
+      },
+      {
+        "action_type": "create_ticket",
+        "detail": "Created P3 ticket CARE-1004 in Care: Plan change Unlimited 999 \u2192 Family 499 for ACC-112045"
+      },
+      {
+        "action_type": "route_to_team",
+        "detail": "Routed to Care: Plan change order requires Care queue ownership"
+      },
+      {
+        "action_type": "schedule_follow_up",
+        "detail": "Order confirmation follow-up for Care ticket CARE-1004"
+      },
+      {
+        "action_type": "draft_response",
+        "detail": "Generated plan-change confirmation email"
+      },
+      {
+        "action_type": "set_resolved_status",
+        "detail": "Resolved status log \u2192 open_in_queue (Care order CARE-1004; confirmation pending)"
+      }
+    ],
+    "ticket_id": "CARE-1004",
+    "queue": "Care",
+    "summary": "Eligibility=yes; quote Unlimited 999\u2192Family 499; opened CARE-1004; Care confirmation follow-up.",
+    "email_draft": "Dear Customer,\n\nWe have checked eligibility for ACC-112045 and opened Care order CARE-1004 for the change to Family 499. You will receive order confirmation shortly.\n\nRegards,\nPulseDesk Care"
+  },
+  {
+    "sample_id": "REQ-006",
+    "expected_branch": "general_enquiry",
+    "classified_as": "general_enquiry",
+    "classification_ok": true,
+    "case_id": "CASE-REQ-006",
+    "needs_review": false,
+    "confidence": 0.97,
+    "action_types": [
+      "close_or_route",
+      "create_ticket",
+      "draft_response",
+      "faq_self_serve",
+      "route_to_team",
+      "set_resolved_status"
+    ],
+    "steps": [
+      {
+        "action_type": "faq_self_serve",
+        "detail": "Provided self-serve guidance for international_roaming: https://help.pulsedesk.example/international-roaming"
+      },
+      {
+        "action_type": "create_ticket",
+        "detail": "Created P4 ticket GEN-1005 in General: General enquiry (international_roaming) for ACC-667812"
+      },
+      {
+        "action_type": "route_to_team",
+        "detail": "Routed to General: Informational enquiry \u2014 General queue tracking"
+      },
+      {
+        "action_type": "close_or_route",
+        "detail": "Disposition=close: self-serve link provided"
+      },
+      {
+        "action_type": "set_resolved_status",
+        "detail": "Resolved status log \u2192 resolved (international_roaming; FAQ self-serve sufficient)"
+      },
+      {
+        "action_type": "draft_response",
+        "detail": "Generated FAQ / how-to response email"
+      }
+    ],
+    "ticket_id": "GEN-1005",
+    "queue": "General",
+    "summary": "Provided FAQ (international_roaming); opened GEN-1005; disposition=close.",
+    "email_draft": "Dear Customer,\n\nThanks for your enquiry on ACC-667812. Please see: https://help.pulsedesk.example/international-roaming. Tracking reference: GEN-1005. Reply if you still need an agent.\n\nRegards,\nPulseDesk Support"
+  },
+  {
+    "sample_id": "REQ-E01",
+    "expected_branch": "ambiguous",
+    "classified_as": "service_outage",
+    "classification_ok": true,
+    "case_id": "CASE-REQ-E01",
+    "needs_review": true,
+    "confidence": 0.45,
+    "action_types": [
+      "draft_response",
+      "match_outage",
+      "needs_human_review",
+      "route_to_team",
+      "set_resolved_status",
+      "set_sla_clock"
+    ],
+    "steps": [
+      {
+        "action_type": "needs_human_review",
+        "detail": "Confidence 0.45 below threshold 0.65 \u2014 parked for agent review"
+      },
+      {
+        "action_type": "match_outage",
+        "detail": "Matched bulletin OUT-2026-068 \u2014 Andheri West / Mumbai Suburban (400053, 400058)"
+      },
+      {
+        "action_type": "set_sla_clock",
+        "detail": "SLA flag set (moderate), due in 8h"
+      },
+      {
+        "action_type": "route_to_team",
+        "detail": "Routed to Network Comms: Matched active bulletin OUT-2026-068"
+      },
+      {
+        "action_type": "draft_response",
+        "detail": "Generated outage/status response email"
+      },
+      {
+        "action_type": "set_resolved_status",
+        "detail": "Resolved status log \u2192 open_in_queue (Network Network Comms; SLA flag active)"
+      },
+      {
+        "action_type": "set_resolved_status",
+        "detail": "Resolved status log \u2192 held_for_review (human-in-the-loop)"
+      }
+    ],
+    "ticket_id": null,
+    "queue": "Network Comms",
+    "summary": "NEEDS REVIEW \u00b7 Matched bulletin OUT-2026-068; routed Network Comms; SLA clock ~8h ETA.",
+    "email_draft": "Dear Customer,\n\nWe matched an active network event (OUT-2026-068) for ACC-220198. Estimated restoration is about 8 hours. Workaround: Toggle airplane mode once; if unresolved, connect to home Wi-Fi. Voice should remain available.\n\nWe will notify you when service is restored.\n\nRegards,\nPulseDesk Network Care"
+  },
+  {
+    "sample_id": "REQ-E02",
+    "expected_branch": "ambiguous",
+    "classified_as": "general_enquiry",
+    "classification_ok": true,
+    "case_id": "CASE-REQ-E02",
+    "needs_review": true,
+    "confidence": 0.4,
+    "action_types": [
+      "close_or_route",
+      "create_ticket",
+      "draft_response",
+      "faq_self_serve",
+      "needs_human_review",
+      "route_to_team",
+      "set_resolved_status"
+    ],
+    "steps": [
+      {
+        "action_type": "needs_human_review",
+        "detail": "Confidence 0.40 below threshold 0.65 \u2014 parked for agent review"
+      },
+      {
+        "action_type": "faq_self_serve",
+        "detail": "Provided self-serve guidance for general_faq: https://help.pulsedesk.example/faq"
+      },
+      {
+        "action_type": "create_ticket",
+        "detail": "Created P4 ticket GEN-1006 in General: General enquiry (general_faq) for ACC-445566"
+      },
+      {
+        "action_type": "route_to_team",
+        "detail": "Routed to General: Informational enquiry \u2014 General queue tracking"
+      },
+      {
+        "action_type": "close_or_route",
+        "detail": "Disposition=route_specialist: may need specialist if FAQ insufficient"
+      },
+      {
+        "action_type": "set_resolved_status",
+        "detail": "Resolved status log \u2192 open_in_queue (general_faq; specialist may be required)"
+      },
+      {
+        "action_type": "draft_response",
+        "detail": "Generated FAQ / how-to response email"
+      },
+      {
+        "action_type": "set_resolved_status",
+        "detail": "Resolved status log \u2192 held_for_review (human-in-the-loop)"
+      }
+    ],
+    "ticket_id": "GEN-1006",
+    "queue": "General",
+    "summary": "NEEDS REVIEW \u00b7 Provided FAQ (general_faq); opened GEN-1006; disposition=route_specialist.",
+    "email_draft": "Dear Customer,\n\nThanks for your enquiry on ACC-445566. Please see: https://help.pulsedesk.example/faq. Tracking reference: GEN-1006. Reply if you still need an agent.\n\nRegards,\nPulseDesk Support"
+  },
+  {
+    "sample_id": "REQ-E03",
+    "expected_branch": "ambiguous",
+    "classified_as": "sim_port",
+    "classification_ok": true,
+    "case_id": "CASE-REQ-E03",
+    "needs_review": true,
+    "confidence": 0.55,
+    "action_types": [
+      "create_ticket",
+      "draft_response",
+      "identity_checklist",
+      "needs_human_review",
+      "route_to_team",
+      "schedule_follow_up",
+      "set_resolved_status"
+    ],
+    "steps": [
+      {
+        "action_type": "needs_human_review",
+        "detail": "Confidence 0.55 below threshold 0.65 \u2014 parked for agent review"
+      },
+      {
+        "action_type": "identity_checklist",
+        "detail": "Identity checklist incomplete for ACC-778899: KYC incomplete \u2014 verify before activate"
+      },
+      {
+        "action_type": "create_ticket",
+        "detail": "Created P2 ticket SIM-1007 in Port/SIM: SIM/port activation for ACC-778899"
+      },
+      {
+        "action_type": "route_to_team",
+        "detail": "Routed to Port/SIM: MNP/SIM activation requires Port/SIM queue ownership"
+      },
+      {
+        "action_type": "schedule_follow_up",
+        "detail": "24h port/activation status follow-up for SIM-1007"
+      },
+      {
+        "action_type": "draft_response",
+        "detail": "Generated port/activation status email"
+      },
+      {
+        "action_type": "set_resolved_status",
+        "detail": "Resolved status log \u2192 open_in_queue (Port/SIM SIM-1007)"
+      },
+      {
+        "action_type": "set_resolved_status",
+        "detail": "Resolved status log \u2192 held_for_review (human-in-the-loop)"
+      }
+    ],
+    "ticket_id": "SIM-1007",
+    "queue": "Port/SIM",
+    "summary": "NEEDS REVIEW \u00b7 Identity checklist for ACC-778899; opened SIM-1007; routed Port/SIM; 24h status follow-up.",
+    "email_draft": "Dear Customer,\n\nWe have logged Port/SIM ticket SIM-1007 for ACC-778899 and completed an identity checklist review. We will update you on activation/port status within 24 hours.\n\nRegards,\nPulseDesk Port & SIM Desk"
+  }
+]

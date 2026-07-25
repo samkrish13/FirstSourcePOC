@@ -1,0 +1,78 @@
+{
+  "golden": [
+    {
+      "id": "REQ-001",
+      "branch": "billing_dispute",
+      "subject": "Charged twice for March postpaid bill — need refund",
+      "from": "priya.nair@email.com",
+      "account": "ACC-784512",
+      "body": "Hi, I paid my March postpaid bill of ₹1,299 via UPI on 3 March (UTR: 409812334567), but I was charged again on 8 March for the same invoice INV-MAR-784512. My account is ACC-784512, mobile 98765 43210. Please reverse the duplicate charge and confirm the refund timeline. I have attached the payment screenshot in my previous mail to billing@."
+    },
+    {
+      "id": "REQ-002",
+      "branch": "service_outage",
+      "subject": "No 4G/data since morning in Indiranagar — work from home blocked",
+      "from": "arjun.mehta@email.com",
+      "account": "ACC-901233",
+      "body": "My mobile data has been completely down since about 7:15 AM today in Indiranagar, Bangalore (pin 560038). Voice calls are patchy and WhatsApp/email won't load. Account ACC-901233, number 99887 66554 on the Unlimited 599 plan. Is there a known outage in this area? I need an ETA — I have client calls all afternoon. Tried restarting the phone and toggling airplane mode already."
+    },
+    {
+      "id": "REQ-003",
+      "branch": "complaint_escalation",
+      "subject": "FINAL WARNING — raising TRAI complaint and closing account if not resolved today",
+      "from": "suresh.iyer@email.com",
+      "account": "ACC-556701",
+      "body": "This is unacceptable. I have raised the same billing and service issue THREE times (tickets #T-44102, #T-44891) with no callback. Your agent promised a refund last week and nothing happened. I am a 6-year customer (ACC-556701) and I will file a TRAI complaint and port out to a competitor TODAY unless a team lead calls me back and fixes this. I also want compensation for the harassment. Do not send another template reply."
+    },
+    {
+      "id": "REQ-004",
+      "branch": "sim_port",
+      "subject": "MNP port-in request — new SIM not activated, UPC expires tomorrow",
+      "from": "neha.kapoor@email.com",
+      "account": "ACC-334890",
+      "body": "I initiated an MNP port-in for my number 98111 22334 using UPC code 847291 (expires tomorrow). I received the new SIM yesterday (kit ID SIM-77821) linked to account ACC-334890 but it still shows 'activation pending' in the app. My Aadhaar eKYC was completed at the store in Koramangala. Please complete identity verification / activation and confirm port status before the UPC expires. I cannot afford to lose this number for work."
+    },
+    {
+      "id": "REQ-005",
+      "branch": "plan_change",
+      "subject": "Want to downgrade from Unlimited 999 to Family 499 from next cycle",
+      "from": "rahul.desai@email.com",
+      "account": "ACC-112045",
+      "body": "Please change my plan from Unlimited 999 (current) to the Family 499 plan starting next billing cycle. Account ACC-112045, number 97654 32109. I only need 1.5GB/day and the cheaper plan is enough. Confirm if I am eligible (no outstanding dues — I paid early), any early-termination fee, and what the prorated charges will look like. Also confirm if my existing OTTs (Disney+ Hotstar) stay or get removed on Family 499."
+    },
+    {
+      "id": "REQ-006",
+      "branch": "general_enquiry",
+      "subject": "How do I enable international roaming for a trip to Singapore next week?",
+      "from": "anita.rao@email.com",
+      "account": "ACC-667812",
+      "body": "Hi, I am travelling to Singapore from 28 July to 5 August and need to know how to enable international roaming on my postpaid line. Account ACC-667812, number 99001 12233 on Unlimited 799. What packs are available, how do I activate (app vs SMS), and will I be charged if I don't use data? Also, is eSIM roaming supported or do I need to keep my physical SIM? A link to the help article would be fine if that covers it."
+    }
+  ],
+  "edge_cases": [
+    {
+      "id": "REQ-E01",
+      "branch": "ambiguous",
+      "subject": "Bill looks high and also no signal at home",
+      "from": "mixed.intent@email.com",
+      "account": "ACC-220198",
+      "body": "My last bill was ₹2,100 which seems high for Unlimited 599, and separately I have had almost no signal at my flat in Andheri West for two days. Account ACC-220198. Not sure if the charge is related to the network issue or a wrong plan. Please look into both — or tell me which team handles this."
+    },
+    {
+      "id": "REQ-E02",
+      "branch": "ambiguous",
+      "subject": "Need help with my account",
+      "from": "vague.user@email.com",
+      "account": "ACC-445566",
+      "body": "Hi team, something is wrong with my account ACC-445566. Please fix ASAP. Call me on 98700 11122. Thanks."
+    },
+    {
+      "id": "REQ-E03",
+      "branch": "ambiguous",
+      "subject": "Port my number AND cancel the disputed charges before I leave",
+      "from": "churn.risk@email.com",
+      "account": "ACC-778899",
+      "body": "I want to port out my number 98100 55667 (ACC-778899) because of the disputed ₹899 charge from last month that still wasn't reversed. If you clear the dispute and give me a retention offer today I might stay — otherwise process MNP and close the account. Also my data has been slow this week. Sort this out."
+    }
+  ]
+}
