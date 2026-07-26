@@ -10,7 +10,8 @@ st.set_page_config(
     page_title="PulseDesk",
     page_icon="▣",
     layout="wide",
-    initial_sidebar_state="expanded",
+    # Desktop CSS pins the nav open; mobile starts collapsed so content isn't covered.
+    initial_sidebar_state="auto",
 )
 
 # Cloud-safe: ensure SQLite schema exists before any page runs
