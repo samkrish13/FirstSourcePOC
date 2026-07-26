@@ -120,6 +120,7 @@ def run(classification: dict[str, Any], subject: str, body: str) -> dict[str, An
             "draft_response",
             "Generated plan-change confirmation email",
             channel="email",
+            email_draft=email,
         )
     )
     steps.append(

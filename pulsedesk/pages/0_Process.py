@@ -30,6 +30,7 @@ from ui.shell import (
     render_mailbox_connect_panel,
     render_playbook_rail,
     render_result_spine,
+    clear_draft_keys,
     seed_work_inbox_if_empty,
     workspace_needs_case_reload,
 )
@@ -593,6 +594,8 @@ with main:
                             assigned_to=user.get("username"),
                             actor=user.get("name"),
                         )
+                    # Remount §5 draft widgets with the new email body
+                    clear_draft_keys()
                     st.session_state.workspace_source_id = st.session_state.last_result.get(
                         "case_id"
                     )

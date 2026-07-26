@@ -1276,12 +1276,25 @@ Signed into **`{addr}`**:
                 st.error(f"Could not create invite: {exc}")
 
 
-def _clear_draft_keys() -> None:
+def clear_draft_keys() -> None:
+    """Drop §5 draft widget session keys so editors remount cleanly."""
     for k in list(st.session_state.keys()):
         sk = str(k)
-        if sk.startswith(("draft_edit_mode_", "draft_baseline_")) or (
-            sk.startswith("draft_") and sk.endswith(("_view", "_edit"))
+        if sk.startswith(
+            (
+                "draft_edit_mode_",
+                "draft_baseline_",
+                "draft_gen_",
+                "draft_active_buf_",
+                "draft_save_flash_",
+            )
         ):
+            st.session_state.pop(k, None)
+            continue
+        if not sk.startswith("draft_"):
+            continue
+        rest = sk[len("draft_") :]
+        if rest.endswith(("_view", "_edit")) or "_e" in rest:
             st.session_state.pop(k, None)
 
 
@@ -1292,7 +1305,7 @@ def compose_new_request() -> None:
     st.session_state.workspace_source_id = "manual:compose"
     st.session_state.last_result = None
     st.session_state.pop("replay_banner", None)
-    _clear_draft_keys()
+    clear_draft_keys()
 
 
 def open_in_workspace(item: dict[str, Any]) -> None:
@@ -1306,7 +1319,7 @@ def open_in_workspace(item: dict[str, Any]) -> None:
     st.session_state.workspace_body = body
     st.session_state.last_result = None
     st.session_state.pop("replay_banner", None)
-    _clear_draft_keys()
+    clear_draft_keys()
 
 
 def inject_css() -> None:
@@ -2354,6 +2367,23 @@ div[data-testid="stDataFrame"] td {{
 .pd-out-row .v.warn {{ font-weight: 600; color: {ALERT_INK}; }}
 .pd-out-row .v.ok {{ font-weight: 600; color: #1F6B3A; }}
 
+/* Draft body — HTML pre avoids Streamlit text_area sticky-empty session keys */
+.pd-draft-pre {{
+  margin: 0 0 10px 0;
+  padding: 12px 14px;
+  background: {SURFACE};
+  border: 1px solid {LINE};
+  border-radius: 6px;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  color: {INK};
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 280px;
+  overflow-y: auto;
+}}
+
 /* Process desk scroll panes — st.container(height=…) owns overflow; tidy borders */
 .stApp:has(.pd-split-desk) section.main [data-testid="stVerticalBlockBorderWrapper"]:has(
   [data-testid="stVerticalBlock"]
@@ -3092,6 +3122,29 @@ def rebuild_result_from_case(case_id: str) -> dict[str, Any] | None:
         ),
         "",
     )
+    # Fallback: outputs pack, then draft_response action payload
+    if not (draft or "").strip():
+        for a in db.get_case_actions(case_id):
+            at = a.get("action_type")
+            payload = _json_obj(a.get("payload_json"))
+            if at == "emit_case_outputs":
+                cand = str(
+                    payload.get("draft_response")
+                    or payload.get("email_draft")
+                    or ""
+                ).strip()
+            elif at == "draft_response":
+                cand = str(
+                    payload.get("email_draft")
+                    or payload.get("draft_response")
+                    or payload.get("body")
+                    or ""
+                ).strip()
+            else:
+                continue
+            if cand and cand != "Customer confirmation / acknowledgement draft generated.":
+                draft = cand
+                break
 
     request_type = case.get("request_type") or clf.get("request_type") or ""
     rem = {
@@ -3772,6 +3825,8 @@ def open_case_in_workspace(case_id: str) -> bool:
         return False
     case = db.get_case(case_id) or {}
     rebuilt["replay"] = False
+    # Drop stale draft widget keys so §5 remounts with the rebuilt email body
+    clear_draft_keys()
     # Set keyed widget values before Process inputs render (caller should st.rerun())
     st.session_state["workspace_subject"] = str(case.get("subject") or "")
     st.session_state["workspace_body"] = str(case.get("body") or "")
@@ -4353,13 +4408,21 @@ def render_result_spine(result: dict[str, Any]) -> None:
             else:
                 st.caption("No payload fields on this step.")
 
-    # 5) Draft — locked until agent clicks Edit (Needs Review only)
-    draft = rem.get("email_draft") or ""
+    # 5) Draft — HTML by default; Edit uses a form (value=) so text cannot vanish
+    draft = (
+        (rem.get("email_draft") or "").strip()
+        or str((result.get("outputs") or {}).get("draft_response") or "").strip()
+        or str(result.get("draft_saved_text") or "").strip()
+    )
+    if draft and not (rem.get("email_draft") or "").strip():
+        rem = dict(rem)
+        rem["email_draft"] = draft
+        result["remediation"] = rem
     baseline_key = f"draft_baseline_{case_id}"
     edit_key = f"draft_edit_mode_{case_id}"
-    view_key = f"draft_{case_id}_view"
-    edit_buf_key = f"draft_{case_id}_edit"
-    if baseline_key not in st.session_state:
+    if baseline_key not in st.session_state or (
+        draft and not str(st.session_state.get(baseline_key) or "").strip()
+    ):
         st.session_state[baseline_key] = draft
     if edit_key not in st.session_state:
         st.session_state[edit_key] = False
@@ -4372,87 +4435,94 @@ def render_result_spine(result: dict[str, Any]) -> None:
         and case_status
         in (db.STATUS_ON_HOLD, db.STATUS_RETURNED, db.STATUS_OPEN)
     )
-    # Lead may edit draft on open escalations; agents unlock via Edit when on hold
-    if is_lead and open_escalation:
-        draft_locked = False
-        lead_editing = True
-    elif is_lead:
-        draft_locked = True
-        lead_editing = False
-    elif agent_can_decide and needs_review:
-        draft_locked = not editing
-        lead_editing = False
-    elif agent_can_decide:
-        # High confidence: draft ready — unlock for quick Release
-        draft_locked = False
-        lead_editing = False
-    elif decision == "escalated_lead":
-        draft_locked = True
-        lead_editing = False
-    else:
-        draft_locked = bool(decision)
-        lead_editing = False
+    lead_editing = bool(is_lead and open_escalation)
+    use_edit_buf = (editing and agent_can_decide) or lead_editing
 
     st.markdown(
         '<div class="pd-section"><div class="pd-section-title">5 · Draft customer response</div></div>',
         unsafe_allow_html=True,
     )
+
+    draft_now = draft
+    if use_edit_buf:
+        # Form + value= always shows the body (no sticky empty widget keys)
+        with st.form(f"draft_edit_form_{case_id}", clear_on_submit=False):
+            edited = st.text_area(
+                "Edit draft",
+                value=draft,
+                height=220,
+                label_visibility="collapsed",
+            )
+            apply_edits = st.form_submit_button(
+                "Apply edits",
+                type="primary",
+                width="stretch",
+            )
+        if apply_edits:
+            draft_now = (edited or "").strip() or draft
+            if is_lead and open_escalation:
+                rem = dict(result.get("remediation") or {})
+                rem["email_draft"] = draft_now
+                result["remediation"] = rem
+                result["draft_saved_text"] = draft_now
+                st.session_state.last_result = result
+            else:
+                st.session_state.last_result = save_agent_draft(result, draft_now)
+            st.session_state[edit_key] = False
+            st.session_state[baseline_key] = draft_now
+            st.rerun()
+        else:
+            draft_now = draft
+    elif draft:
+        # Same white Streamlit box as before — no key, so value= always paints
+        st.text_area(
+            "Draft",
+            value=draft,
+            height=220,
+            disabled=True,
+            label_visibility="collapsed",
+        )
+    else:
+        st.warning(
+            "No draft body found for this case. Re-run the playbook, or open from "
+            "**Case Log → Replay** after a fresh run."
+        )
+
     if is_lead and open_escalation:
         st.caption(
-            "Edit the draft if needed, then **Approve release** "
-            "(sends when Gmail is connected) or **Return to agent** with a reason."
+            "Change the draft above, click **Apply edits**, then **Approve release** "
+            "or **Return to agent**."
         )
     elif agent_can_decide and needs_review:
         if editing:
             st.caption(
-                "Editing unlocked — **Save** if needed, then **Release** to close "
-                "or **Escalate** (reason required)."
+                "Edit the text, click **Apply edits**, then **Release** or **Escalate**."
             )
         else:
             st.caption(
-                "On hold — draft locked. **Edit**, then **Release** to close the case "
-                "(sends if Gmail connected), or **Escalate to lead**."
+                "On hold — draft shown above. **Edit** → **Apply edits**, then **Release** "
+                "or **Escalate to lead**."
             )
     elif agent_can_decide:
         st.caption(
             f"Confidence ≥ {CONFIDENCE_REVIEW_THRESHOLD:.0%} — playbook + draft ready. "
             "**Release draft** closes the case (and emails the customer if Gmail is connected). "
-            "Escalate only if you still want a lead check."
+            "Click **Edit** only if you need to change the wording."
         )
-
-    # Remount widget when unlocking — same key stays disabled in Streamlit
-    use_edit_buf = editing or lead_editing
-    widget_key = edit_buf_key if use_edit_buf else view_key
-    if use_edit_buf and edit_buf_key not in st.session_state:
-        st.session_state[edit_buf_key] = (
-            st.session_state.get(view_key)
-            or result.get("draft_saved_text")
-            or draft
-        )
-    if not use_edit_buf and view_key not in st.session_state:
-        st.session_state[view_key] = (
-            result.get("draft_saved_text") or rem.get("email_draft") or draft
-        )
-
-    st.text_area(
-        "Draft",
-        height=220,
-        key=widget_key,
-        label_visibility="collapsed",
-        disabled=draft_locked,
-    )
 
     # Agent must always finish: Release (close) or Escalate — high or low confidence
     can_agent_act = agent_can_decide
     if can_agent_act:
-        draft_now = st.session_state.get(widget_key) or draft
+        # Prefer latest saved / rem draft (Apply edits updates last_result)
+        draft_now = (
+            str(result.get("draft_saved_text") or "").strip()
+            or (rem.get("email_draft") or "").strip()
+            or draft
+        )
         baseline = st.session_state.get(baseline_key) or draft
         dirty = (draft_now or "").strip() != (baseline or "").strip()
         saved_text = result.get("draft_saved_text")
-        unsaved = dirty and (
-            saved_text is None
-            or (draft_now or "").strip() != (saved_text or "").strip()
-        )
+        unsaved = bool(editing)  # still in editor — must Apply first for Save path
 
         esc_reason = st.selectbox(
             "Escalate reason (required to escalate)",
@@ -4468,6 +4538,7 @@ def render_result_spine(result: dict[str, Any]) -> None:
                 key=f"dec_send_{case_id}",
                 width="stretch",
                 help="Marks case Closed. Sends real email if a Gmail mailbox is connected.",
+                disabled=editing,
             )
         with g2:
             edit = st.button(
@@ -4478,13 +4549,12 @@ def render_result_spine(result: dict[str, Any]) -> None:
                 help="Unlock the AI draft for editing.",
             )
         with g3:
-            can_save = bool(editing and unsaved)
             save = st.button(
                 "Save",
                 key=f"dec_save_{case_id}",
                 width="stretch",
-                disabled=not can_save,
-                help="Save edits without releasing.",
+                disabled=True,
+                help="Use Apply edits inside the editor, then Release.",
             )
         with g4:
             escalate = st.button(
@@ -4492,34 +4562,23 @@ def render_result_spine(result: dict[str, Any]) -> None:
                 key=f"dec_esc_{case_id}",
                 width="stretch",
                 help="Requires a reason code.",
+                disabled=editing,
             )
 
         flash_key = f"draft_save_flash_{case_id}"
         if edit:
-            st.session_state[edit_buf_key] = (
-                st.session_state.get(view_key)
-                or result.get("draft_saved_text")
-                or draft
-            )
             st.session_state[edit_key] = True
             st.session_state.pop(flash_key, None)
             st.rerun()
-        if save and can_save:
-            st.session_state.last_result = save_agent_draft(result, draft_now)
-            st.session_state[flash_key] = True
-            st.rerun()
-        if send:
-            working = result
-            if editing and unsaved:
-                working = save_agent_draft(result, draft_now)
+        if send and not editing:
             kind = "edited_send" if dirty else "approved_send"
             st.session_state[edit_key] = False
             st.session_state.pop(flash_key, None)
             st.session_state.last_result = apply_agent_decision(
-                working, kind, draft_now
+                result, kind, draft_now
             )
             st.rerun()
-        if escalate:
+        if escalate and not editing:
             if not esc_reason:
                 st.error("Pick an escalate reason.")
             else:
@@ -4530,12 +4589,10 @@ def render_result_spine(result: dict[str, Any]) -> None:
                 )
                 st.rerun()
 
+        if editing:
+            st.info("Edit the draft above, then **Apply edits**. After that you can Release.")
         if st.session_state.pop(flash_key, False):
             st.success("Draft saved — still open. Release to close or Escalate when ready.")
-        elif editing and not unsaved and result.get("draft_saved"):
-            st.caption("All changes saved.")
-        elif editing and not dirty:
-            st.caption("No changes yet — edit the draft to enable Save.")
 
     elif is_lead and open_escalation and case_id:
         st.markdown(
@@ -4546,7 +4603,11 @@ def render_result_spine(result: dict[str, Any]) -> None:
             "Approve release sends the draft when a Gmail mailbox is connected; "
             "otherwise it logs a simulated release."
         )
-        draft_now = st.session_state.get(widget_key) or draft
+        draft_now = (
+            str(result.get("draft_saved_text") or "").strip()
+            or (rem.get("email_draft") or "").strip()
+            or draft
+        )
         ret_reason = st.selectbox(
             "Return reason (required to return)",
             RETURN_REASONS,
