@@ -1,6 +1,7 @@
 # PulseDesk
 
-**Live demo:** [YOUR_STREAMLIT_URL_HERE](YOUR_STREAMLIT_URL_HERE)
+**Live demo:** [https://pulsedesk-firstsource.streamlit.app](https://pulsedesk-firstsource.streamlit.app)  
+**GitHub:** [github.com/samkrish13/FirstSourcePOC](https://github.com/samkrish13/FirstSourcePOC)
 
 Telecom BPO **incoming-request** workbench: classify → branch playbook → remediate → log.
 
@@ -128,9 +129,9 @@ pulsedesk/
 │   ├── 1_Case_Log.py
 │   └── 2_Playbooks.py
 ├── screenshots/
+│   ├── 01_process_inbox.jpg … 04_playbooks.jpg
 │   ├── demo_outputs.json
-│   ├── sample_run_log.txt
-│   └── panel_review/           # UI panel stills
+│   └── sample_run_log.txt
 ├── ui/
 │   └── shell.py                # Chrome, tour, spine, HITL
 └── workflows/                  # Classify + 6 branch playbooks
@@ -151,7 +152,7 @@ pulsedesk/
 
 | Asset | Location |
 |---|---|
-| 5-slide summary | [`docs/PulseDesk_Summary.pdf`](docs/PulseDesk_Summary.pdf) (also under repo [`../docs/PulseDesk_Summary.pdf`](../docs/PulseDesk_Summary.pdf)) |
+| 5-slide summary | [`docs/PulseDesk_Summary.pdf`](docs/PulseDesk_Summary.pdf) |
 | Screenshots / panels | [`screenshots/`](screenshots/) |
 | All-branch demo log | [`screenshots/sample_run_log.txt`](screenshots/sample_run_log.txt) |
 | Structured demo outputs | [`screenshots/demo_outputs.json`](screenshots/demo_outputs.json) |
@@ -177,8 +178,8 @@ python run_demo.py
 ```bash
 cd /Users/sam/FirstSourcePOC
 git init
-git add pulsedesk docs/PulseDesk_Summary.pdf README.md SUBMISSION.md .gitignore
-# optional: git add signalforge docs/SignalForge_Summary.pdf
+git add pulsedesk README.md SUBMISSION.md .gitignore
+# optional: git add signalforge
 git status   # confirm NO .env, secrets.toml, or *.db
 git commit -m "$(cat <<'EOF'
 Ship PulseDesk Stage 8 package for panel submission.
@@ -231,9 +232,8 @@ address = "examplefirstsource@gmail.com"
 app_password = "xxxx xxxx xxxx xxxx"
 ```
 
-5. Deploy → copy the live URL (e.g. `https://pulsedesk-firstsource.streamlit.app`)
-6. Paste that URL back in chat — README + deck slide 4 will be updated
+5. Deploy → copy the live URL (current: `https://pulsedesk-firstsource.streamlit.app`)
 
 ### C. ≤3 min recording backup (if live link fails on panel day)
 
-Record locally: login as `p.sharma` / `agent` → Load **REQ-001** → Run playbook → show spine → Case Log → (optional) escalate → `r.mehta` / `lead` lead actions. Keep under 3 minutes. Store the file with the submission pack; link it from email if Cloud is down.
+Follow [`docs/PulseDesk_Demo_Script.md`](docs/PulseDesk_Demo_Script.md) § **≤3 min panel path** (REQ-001 → REQ-002 → REQ-003). Store the recording with the submission pack; link it from email if Cloud is down.

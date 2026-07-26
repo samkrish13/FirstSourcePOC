@@ -22,6 +22,23 @@ page_header(
 )
 
 st.markdown(
+    """
+<div class="pd-section">
+  <p style="margin:0;font-size:15px;line-height:1.6;color:#1F2933;">
+    This tab is a <strong>reference map</strong>, not a place to work cases.
+    Agents open requests and run playbooks on <strong>Process</strong>; outcomes land in
+    <strong>Case Log</strong>. Playbooks exists so anyone can see that PulseDesk is not
+    one generic AI reply — after classification, each request branches into one of six
+    typed remediation paths (billing, outage, escalation, SIM/port, plan change, or
+    general), each with its own queue, steps, and expected outputs. Use the catalog
+    below when explaining the product or onboarding to a desk.
+  </p>
+</div>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
     '<div class="pd-section"><div class="pd-section-title">Branch catalog</div></div>',
     unsafe_allow_html=True,
 )

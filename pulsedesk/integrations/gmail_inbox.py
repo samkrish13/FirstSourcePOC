@@ -308,6 +308,51 @@ def _request_id_for_message(message_id: str) -> str:
     return f"GM{digest}"
 
 
+def fetch_inbox_message_ids(
+    *,
+    mailbox_id: str | None = None,
+) -> set[str]:
+    """All Message-IDs currently in the Gmail INBOX (headers only)."""
+    creds = gmail_credentials(mailbox_id)
+    if not creds:
+        raise RuntimeError("Gmail is not configured.")
+    address, password = creds
+    client = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+    try:
+        client.login(address, password)
+        client.select("INBOX")
+        status, data = client.search(None, "ALL")
+        if status != "OK" or not data or not data[0]:
+            return set()
+        ids = data[0].split()
+        found: set[str] = set()
+        for num in ids:
+            status, msg_data = client.fetch(
+                num, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID MESSAGE-ID)])"
+            )
+            if status != "OK" or not msg_data:
+                continue
+            raw = b""
+            for part in msg_data:
+                if isinstance(part, tuple) and len(part) >= 2 and isinstance(part[1], (bytes, bytearray)):
+                    raw = bytes(part[1])
+                    break
+            if not raw:
+                continue
+            msg = email.message_from_bytes(raw)
+            mid = (msg.get("Message-ID") or msg.get("Message-Id") or "").strip()
+            if mid:
+                found.add(mid)
+            else:
+                found.add(f"imap-{address}-{num.decode() if isinstance(num, bytes) else num}")
+        return found
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
 def fetch_inbox_messages(
     *,
     mailbox_id: str | None = None,
@@ -378,6 +423,7 @@ def sync_gmail_inbox(
     limit: int = 15,
     unseen_only: bool = False,
     actor: str = "gmail-sync",
+    assigned_to: str | None = None,
 ) -> dict[str, Any]:
     """Fetch Gmail messages and create PulseDesk cases (skip duplicates)."""
     import db
@@ -392,6 +438,7 @@ def sync_gmail_inbox(
     )
     created: list[str] = []
     skipped: list[str] = []
+    deleted: list[str] = []
     errors: list[str] = []
 
     for item in messages:
@@ -415,14 +462,29 @@ def sync_gmail_inbox(
                 subject,
                 body,
                 request_id=req_id,
-                assigned_to=None,
+                assigned_to=assigned_to,
                 actor=actor,
             )
             cid = str(result.get("case_id") or case_id)
             db.set_source_mailbox(cid, mailbox)
+            # Ensure ownership matches the agent who synced (process_request may omit)
+            if assigned_to:
+                db.assign_case(cid, assigned_to, updated_by=actor)
             created.append(cid)
         except Exception as exc:  # noqa: BLE001 — surface per-message sync errors
             errors.append(f"{mid}: {exc}")
+
+    # Drop PulseDesk rows whose Gmail messages are no longer in INBOX
+    try:
+        live_ids = fetch_inbox_message_ids(mailbox_id=box["id"])
+        live_case_ids = {f"CASE-{_request_id_for_message(mid)}" for mid in live_ids}
+        for row in db.list_gmail_synced_cases(mailbox):
+            cid = str(row.get("case_id") or "")
+            if cid and cid not in live_case_ids:
+                if db.delete_case(cid):
+                    deleted.append(cid)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"prune-deleted: {exc}")
 
     return {
         "mailbox": mailbox,
@@ -430,6 +492,7 @@ def sync_gmail_inbox(
         "fetched": len(messages),
         "created": created,
         "skipped": skipped,
+        "deleted": deleted,
         "errors": errors,
     }
 

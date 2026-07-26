@@ -10,7 +10,6 @@ Generated / curated for Stage 7 panel submission.
 | `02_result_spine.jpg` | Result spine after Run playbook |
 | `03_case_log.jpg` | Case Log audit view |
 | `04_playbooks.jpg` | Playbooks overview |
-| `panel_review/` | Source capture frames |
 
 Refresh captures later from a live session if the UI chrome changes materially.
 

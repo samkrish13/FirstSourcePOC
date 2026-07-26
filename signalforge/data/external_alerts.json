@@ -1,0 +1,34 @@
+[
+  {
+    "alert_id": "ALT-9001",
+    "customer_id": "CUS-1001",
+    "source": "watchlist_fuzzy",
+    "severity": "high",
+    "ts": "2026-07-22T03:10:00Z",
+    "text": "Fuzzy watchlist adjacency: beneficiary wallet tag overlaps a consortium mule cluster (score 0.81). Rapid outbound sequence post device change."
+  },
+  {
+    "alert_id": "ALT-9002",
+    "customer_id": "CUS-1002",
+    "source": "geo_velocity",
+    "severity": "medium",
+    "ts": "2026-07-21T20:00:00Z",
+    "text": "Impossible-travel style alert: GB login morning, AE card presentment evening. Customer itinerary may explain; no cash-out pattern observed."
+  },
+  {
+    "alert_id": "ALT-9003",
+    "customer_id": "CUS-1003",
+    "source": "fraud_consortium",
+    "severity": "low",
+    "ts": "2026-07-21T16:00:00Z",
+    "text": "Noisy MCC alert on ONLINE_SHOP. Merchant was previously false-positive prone. Customer confirmed purchase via in-app chat; treat as benign unless new signals."
+  },
+  {
+    "alert_id": "ALT-9004",
+    "customer_id": "CUS-1004",
+    "source": "velocity",
+    "severity": "medium",
+    "ts": "2026-07-22T07:10:00Z",
+    "text": "Two supplier transfers in 24h above peer baseline for SME segment."
+  }
+]

@@ -10,9 +10,10 @@ import db
 from ui.shell import (
     BRANCH_LABELS,
     chrome,
+    current_user,
+    open_case_in_workspace,
     page_header,
     page_setup,
-    rebuild_result_from_case,
 )
 
 page_setup("Case Log")
@@ -70,15 +71,26 @@ else:
         st.session_state.case_log_focus = selected
 
         if st.button("Replay on Process", type="primary", key=f"replay_{selected}"):
-            rebuilt = rebuild_result_from_case(selected)
-            if not rebuilt:
+            case = db.get_case(selected) or {}
+            user = current_user() or {}
+            actor = user.get("name") or user.get("username") or "agent"
+            # Closed cases reopen for active work; others stay audit-loadable
+            if str(case.get("status") or "") == db.STATUS_RELEASED:
+                db.set_case_status(selected, db.STATUS_ON_HOLD, updated_by=actor)
+                db.set_needs_review(selected, True)
+                db.log_action(
+                    selected,
+                    db.next_action_order(selected),
+                    "case_reopened",
+                    f"{actor} reopened closed case from Case Log.",
+                    {
+                        "from_status": db.STATUS_RELEASED,
+                        "to_status": db.STATUS_ON_HOLD,
+                    },
+                )
+            if not open_case_in_workspace(selected):
                 st.error("Could not rebuild this case.")
             else:
-                case = db.get_case(selected) or {}
-                st.session_state.workspace_subject = case.get("subject") or ""
-                st.session_state.workspace_body = case.get("body") or ""
-                st.session_state.workspace_source_id = f"replay:{selected}"
-                st.session_state.last_result = rebuilt
                 st.switch_page("pages/0_Process.py")
 
         a_col, m_col = st.columns(2)

@@ -41,7 +41,7 @@ STATUS_LABELS = {
     STATUS_OPEN: "Open",
     STATUS_ON_HOLD: "On hold",
     STATUS_ESCALATED: "Escalated",
-    STATUS_RELEASED: "Released",
+    STATUS_RELEASED: "Closed",
     STATUS_RETURNED: "Returned",
 }
 
@@ -318,6 +318,38 @@ def get_case(case_id: str) -> dict[str, Any] | None:
             (case_id,),
         ).fetchone()
     return dict(row) if row else None
+
+
+def list_gmail_synced_cases(mailbox: str) -> list[dict[str, Any]]:
+    """Cases created from Gmail sync for this mailbox (CASE-GM*)."""
+    mb = (mailbox or "").strip()
+    if not mb:
+        return []
+    with _connect() as conn:
+        _ensure_case_columns(conn)
+        rows = conn.execute(
+            """
+            SELECT * FROM cases
+            WHERE source_mailbox = ?
+              AND case_id LIKE 'CASE-GM%'
+            ORDER BY COALESCE(received_at, created_at) DESC
+            """,
+            (mb,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_case(case_id: str) -> bool:
+    """Remove a case and its actions / messages. Returns True if a row was deleted."""
+    cid = (case_id or "").strip()
+    if not cid:
+        return False
+    with _connect() as conn:
+        _ensure_case_columns(conn)
+        conn.execute("DELETE FROM messages WHERE case_id = ?", (cid,))
+        conn.execute("DELETE FROM actions WHERE case_id = ?", (cid,))
+        cur = conn.execute("DELETE FROM cases WHERE case_id = ?", (cid,))
+        return cur.rowcount > 0
 
 
 def set_needs_review(case_id: str, needs_review: bool) -> None:

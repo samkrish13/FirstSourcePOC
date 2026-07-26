@@ -1,0 +1,6 @@
+customer_id,name,kyc_tier,tenure_months,prior_cases,segment,demo_tier
+CUS-1001,Asha Verma,standard,4,0,retail,high
+CUS-1002,Ben Okonkwo,enhanced,36,1,retail,medium
+CUS-1003,Chloe Tan,standard,18,0,retail,low
+CUS-1004,Dev Patel,standard,8,2,sme,medium
+CUS-1005,Elena Rossi,enhanced,48,0,retail,low

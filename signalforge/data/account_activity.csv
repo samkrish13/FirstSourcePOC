@@ -1,0 +1,8 @@
+customer_id,ts,event,geo,device_change,failed_auth_count_24h
+CUS-1001,2026-07-22T02:05:00Z,new_device_login,"Lagos, NG",True,6
+CUS-1001,2026-07-22T02:09:00Z,password_reset,"Lagos, NG",True,6
+CUS-1002,2026-07-21T15:00:00Z,login,"Dubai, AE",False,0
+CUS-1002,2026-07-20T09:00:00Z,login,"London, GB",False,1
+CUS-1003,2026-07-21T08:00:00Z,login,"Singapore, SG",False,0
+CUS-1004,2026-07-22T06:50:00Z,login,"Mumbai, IN",True,2
+CUS-1005,2026-07-21T11:00:00Z,login,"Milan, IT",False,0

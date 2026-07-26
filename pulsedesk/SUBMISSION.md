@@ -1,26 +1,27 @@
-# PulseDesk — submission checklist (Stage 8)
+# PulseDesk — submission checklist
 
 ## Live demo / video
 
-- [ ] Streamlit Community Cloud URL live
-- [ ] Paste URL into chat so README + deck slide 4 can be updated (replace `YOUR_STREAMLIT_URL_HERE`)
-- [ ] **Backup:** ≤3 min screen recording if live link fails (see README Deploy §C)
+- [x] Streamlit Community Cloud: https://pulsedesk-firstsource.streamlit.app
+- [x] GitHub: https://github.com/samkrish13/FirstSourcePOC
+- [x] Deck slide 4 + READMEs use the live URL (rebuild: `python docs/build_summary_deck_pdf.py`)
+- [ ] **Backup:** ≤3 min screen recording if live link fails (script: `docs/PulseDesk_Demo_Script.md` → **≤3 min panel path**)
 
 ## Brief compliance
 
 - [x] ≥3 request types with **distinct** branches (6 golden: REQ-001…006)
-- [x] Each branch: **response + route + follow-up + log** (`docs/REMEDIATION.md` + `run_demo.py` gate)
-- [x] README: setup + design notes + remediation table
-- [x] Sample input per branch (`data/sample_requests.json`) + output evidence (`screenshots/`)
-- [x] 5-slide deck (`docs/PulseDesk_Summary.pdf`)
-- [x] Live-link placeholder + recording backup plan documented
+- [x] Each branch: **response + route + follow-up + log**
+- [x] README: setup + design notes + remediation table (`README.md`)
+- [x] Sample input per branch (`data/sample_requests.json`) + output evidence (`screenshots/`, `../docs/sample_io/`)
+- [x] 5-slide deck (`docs/PulseDesk_Summary.pdf` + repo copy `../docs/PulseDesk_Summary.pdf`)
+- [x] Live demo URL documented; recording backup plan documented
 
 ## GitHub / Cloud
 
-- [ ] Repo created and pushed (see README Deploy)
-- [ ] `.env` / `.streamlit/secrets.toml` / `*.db` **not** in git
-- [ ] Streamlit Cloud main file: `pulsedesk/app.py` (monorepo) or `app.py` (app-only)
-- [ ] Secrets optional — heuristic mode works without them
+- [x] Repo: https://github.com/samkrish13/FirstSourcePOC
+- [x] Streamlit Cloud main file: `pulsedesk/app.py`
+- [ ] Confirm `.env` / `.streamlit/secrets.toml` / `*.db` **not** in git before each push
+- [x] Secrets optional — heuristic mode works without them
 
 ## Demo accounts
 
@@ -29,4 +30,4 @@
 | `p.sharma` | `agent` | Agent |
 | `r.mehta` | `lead` | Tech Lead |
 
-Panel path: REQ-001 → Run → Case Log; optionally escalate → lead login.
+**Panel path (≤3 min):** REQ-001 → REQ-002 → REQ-003 (billing / outage / escalation). See `docs/PulseDesk_Demo_Script.md`.
