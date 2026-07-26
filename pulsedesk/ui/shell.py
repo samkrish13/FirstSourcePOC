@@ -2367,21 +2367,24 @@ div[data-testid="stDataFrame"] td {{
 .pd-out-row .v.warn {{ font-weight: 600; color: {ALERT_INK}; }}
 .pd-out-row .v.ok {{ font-weight: 600; color: #1F6B3A; }}
 
-/* Draft body — HTML pre avoids Streamlit text_area sticky-empty session keys */
+/* Draft body — always-visible white box (do not rely on text_area in scroll panes) */
 .pd-draft-pre {{
+  display: block !important;
   margin: 0 0 10px 0;
-  padding: 12px 14px;
-  background: {SURFACE};
+  padding: 14px 16px;
+  min-height: 120px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #FFFFFF !important;
   border: 1px solid {LINE};
-  border-radius: 6px;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
-  font-size: 13px;
-  line-height: 1.45;
-  color: {INK};
+  border-radius: 8px;
+  box-shadow: inset 0 1px 2px rgba(31, 41, 51, 0.04);
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: {INK} !important;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 280px;
-  overflow-y: auto;
 }}
 
 /* Process desk scroll panes — st.container(height=…) owns overflow; tidy borders */
@@ -2389,6 +2392,21 @@ div[data-testid="stDataFrame"] td {{
   [data-testid="stVerticalBlock"]
 ) {{
   border: none !important;
+}}
+/* Height-constrained panes squash text_area to 0 — force readable body/draft boxes */
+.stApp:has(.pd-split-desk) [data-testid="stTextArea"] {{
+  min-height: 180px !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}}
+.stApp:has(.pd-split-desk) [data-testid="stTextArea"] textarea,
+.stApp:has(.pd-split-desk) [data-testid="stTextArea"] [data-baseweb="textarea"],
+.stApp:has(.pd-split-desk) [data-testid="stTextArea"] [data-baseweb="base-input"] {{
+  min-height: 160px !important;
+  height: auto !important;
+  opacity: 1 !important;
+  color: {INK} !important;
+  background: #FFFFFF !important;
 }}
 @media (max-width: 900px) {{
   /* Stacked on phones — let page scroll; don't trap in short panes */
@@ -3777,8 +3795,12 @@ def filter_cases_by_query(
     q = (query or "").strip().lower()
     if not q:
         return cases
+    tokens = [t for t in q.replace(",", " ").split() if t]
+    if not tokens:
+        return cases
     out: list[dict[str, Any]] = []
     for c in cases:
+        req = str(c.get("request_type") or "")
         blob = " ".join(
             str(c.get(k) or "")
             for k in (
@@ -3790,9 +3812,11 @@ def filter_cases_by_query(
                 "status",
                 "assigned_to",
                 "source_mailbox",
+                "urgency",
             )
         ).lower()
-        if q in blob:
+        blob = f"{blob} {branch_label(req).lower()}"
+        if all(tok in blob for tok in tokens):
             out.append(c)
     return out
 
@@ -3827,12 +3851,18 @@ def open_case_in_workspace(case_id: str) -> bool:
     rebuilt["replay"] = False
     # Drop stale draft widget keys so §5 remounts with the rebuilt email body
     clear_draft_keys()
-    # Set keyed widget values before Process inputs render (caller should st.rerun())
-    st.session_state["workspace_subject"] = str(case.get("subject") or "")
-    st.session_state["workspace_body"] = str(case.get("body") or "")
+    # Non-widget keys can be set anytime
     st.session_state["workspace_source_id"] = case_id
     st.session_state["selected_inbox_id"] = case_id
     st.session_state["last_result"] = rebuilt
+    # Subject/Body are widgets — queue for Process to apply before they instantiate
+    st.session_state["_pending_workspace"] = {
+        "subject": str(case.get("subject") or ""),
+        "body": str(case.get("body") or ""),
+        "source_id": case_id,
+        "selected_inbox_id": case_id,
+        "last_result": rebuilt,
+    }
     return True
 
 
@@ -4408,12 +4438,26 @@ def render_result_spine(result: dict[str, Any]) -> None:
             else:
                 st.caption("No payload fields on this step.")
 
-    # 5) Draft — HTML by default; Edit uses a form (value=) so text cannot vanish
+    # 5) Draft — recover body from rem / outputs / action payloads
     draft = (
         (rem.get("email_draft") or "").strip()
         or str((result.get("outputs") or {}).get("draft_response") or "").strip()
         or str(result.get("draft_saved_text") or "").strip()
     )
+    if not draft:
+        for step in steps:
+            if (step.get("action_type") or "") != "draft_response":
+                continue
+            payload = _payload_dict(step)
+            cand = str(
+                payload.get("email_draft")
+                or payload.get("draft_response")
+                or payload.get("body")
+                or ""
+            ).strip()
+            if cand:
+                draft = cand
+                break
     if draft and not (rem.get("email_draft") or "").strip():
         rem = dict(rem)
         rem["email_draft"] = draft
@@ -4449,7 +4493,7 @@ def render_result_spine(result: dict[str, Any]) -> None:
         with st.form(f"draft_edit_form_{case_id}", clear_on_submit=False):
             edited = st.text_area(
                 "Edit draft",
-                value=draft,
+                value=draft or "",
                 height=220,
                 label_visibility="collapsed",
             )
@@ -4474,7 +4518,7 @@ def render_result_spine(result: dict[str, Any]) -> None:
         else:
             draft_now = draft
     elif draft:
-        # Same white Streamlit box as before — no key, so value= always paints
+        # Real Streamlit white text box (no key → value= always paints; safe outside height pane)
         st.text_area(
             "Draft",
             value=draft,

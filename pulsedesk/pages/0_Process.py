@@ -58,6 +58,16 @@ user = current_user() or {}
 role = active_role()
 seed_work_inbox_if_empty()
 
+# Apply queued subject/body BEFORE any widgets (inbox open / upload / compose)
+pending = st.session_state.pop("_pending_workspace", None)
+if isinstance(pending, dict):
+    st.session_state.workspace_subject = str(pending.get("subject") or "")
+    st.session_state.workspace_body = str(pending.get("body") or "")
+    st.session_state.workspace_source_id = str(pending.get("source_id") or "")
+    st.session_state.selected_inbox_id = pending.get("selected_inbox_id")
+    if "last_result" in pending:
+        st.session_state.last_result = pending.get("last_result")
+
 page_header(
     "Process" if role == "agent" else "Process · Tech Lead",
     (
@@ -73,11 +83,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Native Streamlit scroll panes (CSS alone is unreliable across versions)
-_PANE_H = 720
+# Inbox scrolls independently; workbench is NOT height-locked so Subject/Body/Draft
+# text_areas keep their normal white Streamlit boxes (height panes squash them to 0).
+_PANE_H = 860
 _left_col, _main_col = st.columns([1.15, 1.85], gap="medium")
 left = _left_col.container(height=_PANE_H, border=False)
-main = _main_col.container(height=_PANE_H, border=False)
+main = _main_col
 
 with left:
     if role == "lead":
@@ -89,15 +100,23 @@ with left:
             label_visibility="collapsed",
         )
         escalated = filter_cases_by_query(escalated, q)
+        searching = bool((q or "").strip())
+        if searching:
+            st.caption(f"{len(escalated)} match{'es' if len(escalated) != 1 else ''}")
         focus = st.session_state.get("lead_queue_focus")
         ids = {c["case_id"] for c in escalated}
-        if escalated and focus not in ids and not _is_composing():
+        if (
+            not searching
+            and escalated
+            and focus not in ids
+            and not _is_composing()
+        ):
             focus = escalated[0]["case_id"]
             st.session_state.lead_queue_focus = focus
 
         actions = render_mail_case_list(
             escalated,
-            selected_id=None if _is_composing() else focus,
+            selected_id=None if _is_composing() or (searching and focus not in ids) else focus,
             key_prefix="lead_mail",
             title="Escalated",
         )
@@ -105,7 +124,12 @@ with left:
             if open_case_in_workspace(str(actions["open"])):
                 st.session_state.lead_queue_focus = actions["open"]
                 st.rerun()
-        elif focus and not _is_composing() and workspace_needs_case_reload(focus):
+        elif (
+            focus
+            and not _is_composing()
+            and not searching
+            and workspace_needs_case_reload(focus)
+        ):
             if open_case_in_workspace(str(focus)):
                 st.session_state.lead_queue_focus = focus
                 st.rerun()
@@ -193,6 +217,9 @@ with left:
             label_visibility="collapsed",
         )
         inbox = filter_cases_by_query(inbox, q)
+        searching = bool((q or "").strip())
+        if searching:
+            st.caption(f"{len(inbox)} match{'es' if len(inbox) != 1 else ''}")
 
         tool_a, tool_b = st.columns(2)
         with tool_a:
@@ -237,9 +264,20 @@ with left:
                 st.caption(f"{len(mailboxes)} mailboxes linked — pick one, then Sync.")
         else:
             st.caption(
-                "No connected mailbox yet · open **Connect / manage mailboxes** below, "
+                "No connected mailbox yet — open **Connect / manage mailboxes** below, "
                 "send an invite, then paste the Google App Password."
             )
+
+        # Keep Connect near Sync (not buried under the case list)
+        st.markdown("##### Mailboxes")
+        with st.expander(
+            "Connect / manage mailboxes",
+            expanded=(
+                not mailboxes
+                or st.session_state.get("side_panel_action") == "mailbox"
+            ),
+        ):
+            render_mailbox_connect_panel(actor=user.get("name"))
 
         if sync:
             if not gmail_configured() or not sync_pick:
@@ -306,13 +344,32 @@ with left:
         focus = st.session_state.get("selected_inbox_id")
         ids = {c["case_id"] for c in inbox}
         suppress_focus = bool(st.session_state.pop("_suppress_inbox_autofocus", False))
-        if not suppress_focus and inbox and focus not in ids and not composing:
-            focus = inbox[0]["case_id"]
-            st.session_state.selected_inbox_id = focus
+        src_case = str(st.session_state.get("workspace_source_id") or "").strip()
+        src_is_case = bool(
+            src_case and not src_case.startswith(("manual:", "upload:", "replay:"))
+        )
+        # While searching: never autofocus / reload — that steals the search box caret
+        # After Run playbook: never jump to another inbox card over the new result
+        if (
+            not searching
+            and not suppress_focus
+            and inbox
+            and focus not in ids
+            and not composing
+        ):
+            if src_is_case and src_case not in ids:
+                # Keep workbench on the case we just ran (may be outside current filter)
+                focus = src_case
+                st.session_state.selected_inbox_id = src_case
+            else:
+                focus = inbox[0]["case_id"]
+                st.session_state.selected_inbox_id = focus
 
         actions = render_mail_case_list(
             inbox,
-            selected_id=None if composing else focus,
+            selected_id=None
+            if composing or (searching and focus not in ids)
+            else (focus if focus in ids else None),
             key_prefix="work_mail",
             title="Inbox",
             allow_claim=True,
@@ -352,33 +409,34 @@ with left:
                 finally:
                     st.session_state._unassign_busy = False
                 st.rerun()
-        if focus and focus in ids and not composing and workspace_needs_case_reload(focus):
+        if (
+            focus
+            and focus in ids
+            and not composing
+            and not searching
+            and workspace_needs_case_reload(focus)
+        ):
             if open_case_in_workspace(focus):
                 st.rerun()
 
         if not inbox:
             hint = (
-                "Synced Gmail usually lands in **Unassigned** until you Claim it. "
-                "Try Unassigned / All, or clear the mailbox filter to All mailboxes."
+                "No cases match this search — clear the search box."
+                if searching
+                else (
+                    "Synced Gmail usually lands in **Unassigned** until you Claim it. "
+                    "Try Unassigned / All, or clear the mailbox filter to All mailboxes."
+                )
             )
             st.markdown(
                 f"""
 <div class="pd-empty">
-  <div class="pd-empty-title">No cases in this filter</div>
+  <div class="pd-empty-title">{"No matches" if searching else "No cases in this filter"}</div>
   <div class="pd-empty-hint">{hint}</div>
 </div>
                 """,
                 unsafe_allow_html=True,
             )
-
-        with st.expander(
-            "Connect / manage mailboxes",
-            expanded=(
-                not mailboxes
-                or st.session_state.get("side_panel_action") == "mailbox"
-            ),
-        ):
-            render_mailbox_connect_panel(actor=user.get("name"))
 
         with st.expander("Load demo sample into form", expanded=False):
             samples = all_inbox_items()
@@ -393,6 +451,7 @@ with left:
                     ),
                     i,
                 ),
+                key="demo_sample_pick",
             )
             if st.button("Load sample", key="load_demo_sample"):
                 item = next(s for s in samples if s["id"] == sid)
@@ -402,16 +461,6 @@ with left:
         render_playbook_rail(result=st.session_state.get("last_result"))
 
 with main:
-    # Apply upload/form writes before Subject/Body widgets exist (Streamlit forbids
-    # mutating widget keys after those widgets are instantiated on the same run).
-    pending = st.session_state.pop("_pending_workspace", None)
-    if isinstance(pending, dict):
-        st.session_state.workspace_subject = str(pending.get("subject") or "")
-        st.session_state.workspace_body = str(pending.get("body") or "")
-        st.session_state.workspace_source_id = str(pending.get("source_id") or "")
-        st.session_state.selected_inbox_id = pending.get("selected_inbox_id")
-        st.session_state.last_result = pending.get("last_result")
-
     # Release success when desk was cleared (no spine on screen)
     release_flash = st.session_state.get("_release_flash")
     if (
@@ -553,9 +602,14 @@ with main:
                 }
                 st.rerun()
 
-        with st.expander("Advanced — force playbook", expanded=False):
+        with st.expander(
+            "Advanced — force playbook",
+            expanded=str(st.session_state.get("force_branch") or "(auto)") != "(auto)",
+        ):
             force_options = ["(auto)"] + [key for key, *_ in PLAYBOOKS]
-            force_pick = st.selectbox(
+            if st.session_state.get("force_branch") not in force_options:
+                st.session_state.force_branch = "(auto)"
+            st.selectbox(
                 "Override classification",
                 force_options,
                 format_func=lambda k: (
@@ -564,6 +618,19 @@ with main:
                     else f"{BRANCH_LABELS.get(k, k)}"
                 ),
                 key="force_branch",
+                help="Pick a playbook, then click Run playbook. The forced branch is applied on that run.",
+            )
+            st.caption(
+                "Select a branch here, then **Run playbook**. "
+                "Useful for demos when the sample would otherwise classify differently."
+            )
+
+        force_pick = str(st.session_state.get("force_branch") or "(auto)")
+        force_type = None if force_pick == "(auto)" else force_pick
+        if force_type:
+            st.info(
+                f"Force playbook armed: **{BRANCH_LABELS.get(force_type, force_type)}** "
+                f"(`{force_type}`). Click **Run playbook** to apply."
             )
 
         run_busy = bool(st.session_state.get("_run_busy"))
@@ -583,10 +650,15 @@ with main:
                 if not subject:
                     st.info("No subject entered — using “(no subject)”.")
                     subject = "(no subject)"
+                # Re-read at click time — never trust a stale local from a prior path
+                force_pick = str(st.session_state.get("force_branch") or "(auto)")
                 force_type = None if force_pick == "(auto)" else force_pick
                 st.session_state._run_busy = True
                 try:
-                    with st.spinner("Running playbook…"):
+                    with st.spinner(
+                        "Running playbook…"
+                        + (f" (forced: {force_type})" if force_type else "")
+                    ):
                         st.session_state.last_result = process_request(
                             subject,
                             body,
@@ -596,10 +668,16 @@ with main:
                         )
                     # Remount §5 draft widgets with the new email body
                     clear_draft_keys()
-                    st.session_state.workspace_source_id = st.session_state.last_result.get(
-                        "case_id"
+                    new_id = str(
+                        (st.session_state.last_result or {}).get("case_id") or ""
                     )
-                    st.session_state.selected_inbox_id = st.session_state.workspace_source_id
+                    st.session_state.workspace_source_id = new_id
+                    st.session_state.selected_inbox_id = new_id
+                    # Don't let inbox autofocus reload an older case over this run
+                    st.session_state._suppress_inbox_autofocus = True
+                    st.session_state._pending_inbox_filter = "Mine"
+                    if force_type:
+                        st.session_state._force_run_flash = force_type
                 finally:
                     st.session_state._run_busy = False
                 st.rerun()
@@ -610,6 +688,12 @@ with main:
         )
 
     result = st.session_state.get("last_result")
+    force_flash = st.session_state.pop("_force_run_flash", None)
+    if force_flash and result:
+        st.success(
+            f"Forced playbook applied: **{BRANCH_LABELS.get(str(force_flash), force_flash)}** "
+            f"→ case `{result.get('case_id')}`."
+        )
     if result:
         st.markdown("---")
         render_result_spine(result)

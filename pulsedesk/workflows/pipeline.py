@@ -50,6 +50,7 @@ def process_request(
             + f" | DEMO override: forced type={force_type}"
         )
         classification["forced_type"] = force_type
+        classification["mode"] = "forced"
 
     request_type = classification.get("request_type", "general_enquiry")
     if request_type not in BRANCHES:
