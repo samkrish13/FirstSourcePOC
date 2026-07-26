@@ -2354,6 +2354,32 @@ div[data-testid="stDataFrame"] td {{
 .pd-out-row .v.warn {{ font-weight: 600; color: {ALERT_INK}; }}
 .pd-out-row .v.ok {{ font-weight: 600; color: #1F6B3A; }}
 
+/* Process inbox | workbench: one page scroll — not two independent panes */
+.stApp:not(:has(.pd-login-anchor)) section.main [data-testid="stHorizontalBlock"] {{
+  align-items: flex-start !important;
+}}
+.stApp:not(:has(.pd-login-anchor)) section.main [data-testid="stHorizontalBlock"] > [data-testid="column"] {{
+  overflow: visible !important;
+  height: auto !important;
+  max-height: none !important;
+}}
+.stApp:not(:has(.pd-login-anchor)) section.main [data-testid="stHorizontalBlock"] > [data-testid="column"]
+  > div,
+.stApp:not(:has(.pd-login-anchor)) section.main [data-testid="stHorizontalBlock"] > [data-testid="column"]
+  [data-testid="stVerticalBlock"],
+.stApp:not(:has(.pd-login-anchor)) section.main [data-testid="stHorizontalBlock"] > [data-testid="column"]
+  [data-testid="stVerticalBlockBorderWrapper"] {{
+  overflow: visible !important;
+  height: auto !important;
+  max-height: none !important;
+}}
+.stApp:not(:has(.pd-login-anchor)) section.main {{
+  overflow-y: visible !important;
+}}
+.stApp:not(:has(.pd-login-anchor)) .block-container {{
+  overflow: visible !important;
+}}
+
 /* Top toaster stack — notifications / alerts / flags */
 .pd-toast-stack {{
   position: sticky;
