@@ -765,7 +765,7 @@ def _tour_steps_for(user: dict[str, str]) -> list[dict[str, Any]]:
                 "title": "You're ready",
                 "body": (
                     "Back on **Process**, work the escalated queue. "
-                    "Lifecycle: **Open → On hold → Escalated → Released / Returned**."
+                    "Lifecycle: **Open → On hold → Escalated → Closed / Returned**."
                 ),
                 "page": _PAGE_PROCESS,
                 "badge": "Done",
@@ -3018,6 +3018,12 @@ def _decision_from_actions(case_id: str) -> tuple[str | None, str | None]:
     agent_decision = lead_decision = None
     for a in db.get_case_actions(case_id):
         t = a.get("action_type") or ""
+        if t == "case_reopened":
+            # Prior release no longer locks the gate
+            agent_decision = None
+            if lead_decision == "approved_release":
+                lead_decision = None
+            continue
         if t in agent_map:
             agent_decision = agent_map[t]
         if t in lead_map:
@@ -3084,6 +3090,10 @@ def rebuild_result_from_case(case_id: str) -> dict[str, Any] | None:
         "summary": "",
     }
     needs_review = bool(case.get("needs_review"))
+    status = case.get("status") or db.STATUS_OPEN
+    # Released / closed cases must never re-open the review gate from a stale flag
+    if status == db.STATUS_RELEASED:
+        needs_review = False
     from workflows.outputs import build_case_outputs
 
     outputs = build_case_outputs(
@@ -3100,10 +3110,10 @@ def rebuild_result_from_case(case_id: str) -> dict[str, Any] | None:
         "needs_review": needs_review,
         "remediation": rem,
         "outputs": outputs,
-        "replay": True,
+        "replay": status == db.STATUS_RELEASED,
         "agent_decision": agent_decision,
         "lead_decision": lead_decision,
-        "status": case.get("status") or db.STATUS_OPEN,
+        "status": status,
         "assigned_to": case.get("assigned_to"),
         "status_updated_at": case.get("status_updated_at"),
         "status_updated_by": case.get("status_updated_by"),
@@ -3221,12 +3231,21 @@ def apply_agent_decision(
         result["needs_review"] = False
         result["status"] = db.STATUS_RELEASED
         result["outbound_send"] = send_meta
-        # Drop from active inbox selection so Mine/Unassigned refresh feels closed
+        # Leave the active desk — reopen later via Case Log → Replay
         st.session_state.selected_inbox_id = None
+        st.session_state["_suppress_inbox_autofocus"] = True
         st.session_state["_release_flash"] = {
             "case_id": case_id,
             "sent": bool(send_meta and send_meta.get("ok") and not send_meta.get("simulated")),
-            "detail": (send_meta or {}).get("detail") or "Case marked Released.",
+            "detail": (send_meta or {}).get("detail") or "Case marked Closed.",
+            "show_empty": True,
+        }
+        st.session_state["_pending_workspace"] = {
+            "subject": "",
+            "body": "",
+            "source_id": "",
+            "selected_inbox_id": None,
+            "last_result": None,
         }
     else:
         db.set_needs_review(case_id, True)
@@ -3256,7 +3275,7 @@ def apply_agent_decision(
         rem["steps"].append(
             {
                 "action_type": "set_resolved_status",
-                "detail": "Status → Released (closed)",
+                "detail": "Status → Closed",
                 "payload": {
                     "status": db.STATUS_RELEASED,
                     "resolved_status_log": True,
@@ -3277,6 +3296,20 @@ def apply_agent_decision(
     )
     rem["outputs"] = result["outputs"]
     _toast_decision(decision, case_id, send_meta=send_meta)
+
+    # Re-hydrate from SQLite so the spine matches DB (status / decision / gate)
+    if decision in ("approved_send", "edited_send", "escalated_lead"):
+        rebuilt = rebuild_result_from_case(case_id)
+        if rebuilt:
+            rebuilt["replay"] = False
+            if send_meta:
+                rebuilt["outbound_send"] = send_meta
+            rebuilt["agent_decision"] = decision
+            if decision in ("approved_send", "edited_send"):
+                rebuilt["needs_review"] = False
+                rebuilt["status"] = db.STATUS_RELEASED
+                rebuilt["replay"] = False
+            return rebuilt
     return result
 
 
@@ -3362,10 +3395,20 @@ def apply_lead_decision(
         result["status"] = db.STATUS_RELEASED
         result["outbound_send"] = send_meta
         st.session_state.lead_queue_focus = None
+        st.session_state.selected_inbox_id = None
+        st.session_state["_suppress_inbox_autofocus"] = True
         st.session_state["_release_flash"] = {
             "case_id": case_id,
             "sent": bool(send_meta and send_meta.get("ok") and not send_meta.get("simulated")),
-            "detail": (send_meta or {}).get("detail") or "Case marked Released.",
+            "detail": (send_meta or {}).get("detail") or "Case marked Closed.",
+            "show_empty": True,
+        }
+        st.session_state["_pending_workspace"] = {
+            "subject": "",
+            "body": "",
+            "source_id": "",
+            "selected_inbox_id": None,
+            "last_result": None,
         }
         if draft:
             rem = dict(result.get("remediation") or {})
@@ -3411,7 +3454,7 @@ def apply_lead_decision(
         steps.append(
             {
                 "action_type": "set_resolved_status",
-                "detail": "Status → Released (closed · lead)",
+                "detail": "Status → Closed (lead)",
                 "payload": {
                     "status": db.STATUS_RELEASED,
                     "resolved_status_log": True,
@@ -3870,11 +3913,11 @@ def _toast_decision(
     sent = bool(send_meta and send_meta.get("ok") and not send_meta.get("simulated"))
     if kind in ("approved_send", "edited_send", "approved_release"):
         if sent:
-            label = "Released · email sent"
+            label = "Closed · email sent"
         elif send_meta:
-            label = "Released · simulated send"
+            label = "Closed · simulated send"
         else:
-            label = "Released"
+            label = "Closed"
     else:
         labels = {
             "escalated_lead": "Escalated to lead",
@@ -4039,17 +4082,57 @@ def render_result_spine(result: dict[str, Any]) -> None:
     case_id = result.get("case_id", "")
     decision = result.get("agent_decision")
     lead_decision = result.get("lead_decision")
-    is_replay = bool(result.get("replay"))
+    live: dict[str, Any] = {}
+    # Prefer live DB truth — session result can lag right after Release
+    if case_id:
+        live = db.get_case(case_id) or {}
+        live_status = str(live.get("status") or "")
+        if live_status == db.STATUS_RELEASED:
+            needs_review = False
+            case_status_live = db.STATUS_RELEASED
+        else:
+            case_status_live = live_status or None
+        agent_live, lead_live = _decision_from_actions(case_id)
+        if agent_live:
+            decision = agent_live
+        if lead_live:
+            lead_decision = lead_live
+        if live and "needs_review" in live and live_status != db.STATUS_RELEASED:
+            needs_review = bool(live.get("needs_review"))
+    else:
+        case_status_live = None
     role = active_role()
     is_agent = role == "agent"
     is_lead = role == "lead"
-    open_escalation = case_is_open_escalation(result)
-    case_status = result.get("status") or (
+    case_status = case_status_live or result.get("status") or (
         db.STATUS_ON_HOLD if needs_review else db.STATUS_OPEN
     )
+    # Stale release decisions must not lock the gate after Case Log reopen
+    if decision in ("approved_send", "edited_send") and case_status != db.STATUS_RELEASED:
+        decision = None
+    if lead_decision == "approved_release" and case_status != db.STATUS_RELEASED:
+        lead_decision = None
+    # Audit-only lock: closed cases (Case Log replay of a Closed case)
+    is_replay = bool(result.get("replay")) and case_status == db.STATUS_RELEASED
+    open_escalation = case_is_open_escalation(
+        {
+            **result,
+            "agent_decision": decision,
+            "lead_decision": lead_decision,
+            "status": case_status,
+            "needs_review": needs_review,
+        }
+    )
+    # Closed cases never show the release / escalate gate
+    if case_status == db.STATUS_RELEASED:
+        needs_review = False
     status_label = db.STATUS_LABELS.get(case_status, case_status)
-    status_by = result.get("status_updated_by") or "—"
-    status_at = (result.get("status_updated_at") or "")[:19].replace("T", " ")
+    status_by = result.get("status_updated_by") or live.get("status_updated_by") or "—"
+    status_at = (
+        (result.get("status_updated_at") or live.get("status_updated_at") or "")
+        [:19]
+        .replace("T", " ")
+    )
     lead_note = (result.get("lead_note_to_agent") or "").strip()
     return_reason = (result.get("return_reason") or "").strip()
     escalate_reason = (result.get("escalate_reason") or "").strip()
@@ -4065,26 +4148,23 @@ def render_result_spine(result: dict[str, Any]) -> None:
     if isinstance(flash, dict) and flash.get("case_id") == case_id:
         if flash.get("sent"):
             st.success(
-                f"**Case closed · Released** — email sent. {flash.get('detail') or ''}"
+                f"**Case closed** — email sent. {flash.get('detail') or ''}"
             )
         else:
             st.success(
-                f"**Case closed · Released** — {flash.get('detail') or 'Logged as released.'}"
+                f"**Case closed** — {flash.get('detail') or 'Logged as closed.'}"
             )
-    elif case_status == db.STATUS_RELEASED or decision in (
-        "approved_send",
-        "edited_send",
-    ) or lead_decision == "approved_release":
+    elif case_status == db.STATUS_RELEASED:
         outbound = result.get("outbound_send") or {}
         if outbound.get("ok") and not outbound.get("simulated"):
             st.success(
-                f"**Case closed · Released** — reply emailed "
+                f"**Case closed** — reply emailed "
                 f"({outbound.get('from')} → {outbound.get('to')})."
             )
         else:
             st.success(
-                "**Case closed · Released** — removed from active Mine / Unassigned. "
-                "See Case Log for the audit trail."
+                "**Case closed** — removed from active Mine / Unassigned. "
+                "Reopen later from Case Log → Replay on Process."
             )
 
     if is_replay and is_agent and case_status not in (db.STATUS_RETURNED, db.STATUS_ON_HOLD):
@@ -4271,15 +4351,26 @@ def render_result_spine(result: dict[str, Any]) -> None:
         st.session_state[edit_key] = False
 
     editing = bool(st.session_state.get(edit_key)) and not decision
-    # Lead may edit draft on open escalations; agents unlock via Edit
+    agent_can_decide = (
+        is_agent
+        and not is_replay
+        and not decision
+        and case_status
+        in (db.STATUS_ON_HOLD, db.STATUS_RETURNED, db.STATUS_OPEN)
+    )
+    # Lead may edit draft on open escalations; agents unlock via Edit when on hold
     if is_lead and open_escalation:
         draft_locked = False
         lead_editing = True
     elif is_lead:
         draft_locked = True
         lead_editing = False
-    elif is_agent and not is_replay and needs_review and not decision:
+    elif agent_can_decide and needs_review:
         draft_locked = not editing
+        lead_editing = False
+    elif agent_can_decide:
+        # High confidence: draft ready — unlock for quick Release
+        draft_locked = False
         lead_editing = False
     elif decision == "escalated_lead":
         draft_locked = True
@@ -4294,17 +4385,26 @@ def render_result_spine(result: dict[str, Any]) -> None:
     )
     if is_lead and open_escalation:
         st.caption(
-            "Edit the draft if needed, then **Approve release** (simulated until email wired) "
-            "or **Return to agent** with a reason."
+            "Edit the draft if needed, then **Approve release** "
+            "(sends when Gmail is connected) or **Return to agent** with a reason."
         )
-    elif is_agent and not is_replay and needs_review and not decision:
+    elif agent_can_decide and needs_review:
         if editing:
-            st.caption("Editing unlocked — **Save** if needed, then **Release** or **Escalate** (reason required).")
+            st.caption(
+                "Editing unlocked — **Save** if needed, then **Release** to close "
+                "or **Escalate** (reason required)."
+            )
         else:
             st.caption(
-                "Draft locked. **Edit** to change it, **Release** (simulated until email wired), "
-                "or **Escalate to lead** with a reason code."
+                "On hold — draft locked. **Edit**, then **Release** to close the case "
+                "(sends if Gmail connected), or **Escalate to lead**."
             )
+    elif agent_can_decide:
+        st.caption(
+            f"Confidence ≥ {CONFIDENCE_REVIEW_THRESHOLD:.0%} — playbook + draft ready. "
+            "**Release draft** closes the case (and emails the customer if Gmail is connected). "
+            "Escalate only if you still want a lead check."
+        )
 
     # Remount widget when unlocking — same key stays disabled in Streamlit
     use_edit_buf = editing or lead_editing
@@ -4328,14 +4428,8 @@ def render_result_spine(result: dict[str, Any]) -> None:
         disabled=draft_locked,
     )
 
-    # Agent decision gate (agent role only) — includes Returned cases
-    can_agent_act = (
-        is_agent
-        and not is_replay
-        and needs_review
-        and not decision
-        and case_status in (db.STATUS_ON_HOLD, db.STATUS_RETURNED, db.STATUS_OPEN)
-    )
+    # Agent must always finish: Release (close) or Escalate — high or low confidence
+    can_agent_act = agent_can_decide
     if can_agent_act:
         draft_now = st.session_state.get(widget_key) or draft
         baseline = st.session_state.get(baseline_key) or draft
@@ -4359,7 +4453,7 @@ def render_result_spine(result: dict[str, Any]) -> None:
                 type="primary",
                 key=f"dec_send_{case_id}",
                 width="stretch",
-                help="Marks case Released. Sends real email if a Gmail mailbox is connected.",
+                help="Marks case Closed. Sends real email if a Gmail mailbox is connected.",
             )
         with g2:
             edit = st.button(
@@ -4423,7 +4517,7 @@ def render_result_spine(result: dict[str, Any]) -> None:
                 st.rerun()
 
         if st.session_state.pop(flash_key, False):
-            st.success("Draft saved — still held. Release or Escalate when ready.")
+            st.success("Draft saved — still open. Release to close or Escalate when ready.")
         elif editing and not unsaved and result.get("draft_saved"):
             st.caption("All changes saved.")
         elif editing and not dirty:
@@ -4494,11 +4588,6 @@ def render_result_spine(result: dict[str, Any]) -> None:
                 )
                 st.rerun()
 
-    elif not needs_review and not is_replay and not decision and is_agent:
-        st.caption(
-            f"Confidence ≥ {CONFIDENCE_REVIEW_THRESHOLD:.0%} — no hold. "
-            "Draft logged for audit; high-confidence cases skip the release gate in this POC."
-        )
     elif is_lead and not open_escalation:
         st.caption("Lead mode — open an Escalated case from your queue.")
 
