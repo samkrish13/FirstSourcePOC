@@ -114,7 +114,9 @@ with left:
         render_playbook_rail(result=st.session_state.get("last_result"))
 
     else:
-        # Apply filter changes from Claim/Unassign before the widget mounts
+        # Init before widget — do not pass default= when also writing session_state
+        if "inbox_filter" not in st.session_state:
+            st.session_state.inbox_filter = "Mine"
         pending_filt = st.session_state.pop("_pending_inbox_filter", None)
         if pending_filt in ("Mine", "Unassigned", "All"):
             st.session_state.inbox_filter = pending_filt
@@ -125,7 +127,6 @@ with left:
         filt = st.segmented_control(
             "Assignment",
             options=["Mine", "Unassigned", "All"],
-            default="Mine",
             key="inbox_filter",
         ) or "Mine"
         me = user.get("username") or ""
