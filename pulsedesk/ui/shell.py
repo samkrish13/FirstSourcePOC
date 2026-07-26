@@ -3286,7 +3286,7 @@ def render_mail_case_list(
         assignee = str(
             (live or case).get("assigned_to") or case.get("assigned_to") or ""
         ).strip()
-        is_mine = bool(me and assignee == me) or view == "Mine"
+        is_mine = bool(me and assignee == me) or assignment_view == "Mine"
         with st.container(border=True):
             _render_html(mail_case_row_html(case, active=active))
             # Always offer Open/Reload so Mine cards are never dead-ends
