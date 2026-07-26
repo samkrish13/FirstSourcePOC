@@ -67,6 +67,11 @@ page_header(
     eyebrow="Workbench",
 )
 
+st.markdown(
+    '<div class="pd-split-desk" aria-hidden="true"></div>',
+    unsafe_allow_html=True,
+)
+
 left, main = st.columns([1.15, 1.85], gap="medium")
 
 with left:
@@ -155,9 +160,15 @@ with left:
         source_filter = None if mailbox_view == "All mailboxes" else mailbox_view
 
         if filt == "Mine":
-            inbox = db.list_inbox(
-                assigned_to=me, statuses=_WORK_STATUSES, source_mailbox=source_filter
-            )
+            # Mine first (all mailboxes), then optionally narrow — keep untagged
+            # compose/demo cases visible when a Gmail filter is selected.
+            inbox = db.list_inbox(assigned_to=me, statuses=_WORK_STATUSES)
+            if source_filter:
+                inbox = [
+                    c
+                    for c in inbox
+                    if (c.get("source_mailbox") or "") in ("", source_filter)
+                ]
         elif filt == "Unassigned":
             inbox = db.list_inbox(
                 unassigned_only=True,
@@ -239,6 +250,7 @@ with left:
                             mailbox_id=sync_pick,
                             limit=15,
                             actor=user.get("name") or "gmail-sync",
+                            assigned_to=me or None,
                         )
                     except Exception as exc:  # noqa: BLE001
                         st.error(f"Gmail sync failed: {exc}")
@@ -246,22 +258,50 @@ with left:
                 if report:
                     n_new = len(report.get("created") or [])
                     n_skip = len(report.get("skipped") or [])
+                    n_del = len(report.get("deleted") or [])
                     n_err = len(report.get("errors") or [])
+                    mb_addr = str(report.get("mailbox") or "")
+                    # New mail is assigned to you → Mine. Older synced mail is often
+                    # Unassigned — land there so the list isn't empty after Sync.
+                    if n_new:
+                        st.session_state._pending_inbox_filter = "Mine"
+                    elif n_skip or n_del:
+                        st.session_state._pending_inbox_filter = "Unassigned"
+                    if mb_addr:
+                        st.session_state._pending_mailbox_view = mb_addr
+                    # If the open case was pruned from Gmail, clear the workbench
+                    open_id = str(st.session_state.get("workspace_source_id") or "")
+                    if open_id and open_id in (report.get("deleted") or []):
+                        st.session_state._pending_workspace = {
+                            "subject": "",
+                            "body": "",
+                            "source_id": "",
+                            "selected_inbox_id": None,
+                            "last_result": None,
+                        }
                     st.success(
-                        f"**{report.get('label') or report.get('mailbox')}** · "
+                        f"**{report.get('label') or mb_addr}** · "
                         f"synced **{report.get('fetched', 0)}** · "
                         f"**{n_new}** new · **{n_skip}** already in inbox"
+                        + (f" · **{n_del}** removed (deleted in Gmail)" if n_del else "")
                         + (f" · **{n_err}** errors" if n_err else "")
+                        + (
+                            " · showing **Mine**"
+                            if n_new
+                            else " · showing **Unassigned**"
+                            if (n_skip or n_del)
+                            else ""
+                        )
                     )
                     if report.get("errors"):
                         st.caption("; ".join(report["errors"][:3]))
-                    if n_new:
-                        st.rerun()
+                    st.rerun()
 
         composing = _is_composing()
         focus = st.session_state.get("selected_inbox_id")
         ids = {c["case_id"] for c in inbox}
-        if inbox and focus not in ids and not composing:
+        suppress_focus = bool(st.session_state.pop("_suppress_inbox_autofocus", False))
+        if not suppress_focus and inbox and focus not in ids and not composing:
             focus = inbox[0]["case_id"]
             st.session_state.selected_inbox_id = focus
 
@@ -312,11 +352,15 @@ with left:
                 st.rerun()
 
         if not inbox:
+            hint = (
+                "Synced Gmail usually lands in **Unassigned** until you Claim it. "
+                "Try Unassigned / All, or clear the mailbox filter to All mailboxes."
+            )
             st.markdown(
-                """
+                f"""
 <div class="pd-empty">
   <div class="pd-empty-title">No cases in this filter</div>
-  <div class="pd-empty-hint">Compose a request, sync Gmail, or switch Mine / Unassigned / All.</div>
+  <div class="pd-empty-hint">{hint}</div>
 </div>
                 """,
                 unsafe_allow_html=True,
@@ -363,10 +407,41 @@ with main:
         st.session_state.selected_inbox_id = pending.get("selected_inbox_id")
         st.session_state.last_result = pending.get("last_result")
 
+    # Release success when desk was cleared (no spine on screen)
+    release_flash = st.session_state.get("_release_flash")
+    if (
+        isinstance(release_flash, dict)
+        and release_flash.get("show_empty")
+        and not st.session_state.get("last_result")
+    ):
+        flash = st.session_state.pop("_release_flash", None) or {}
+        cid = flash.get("case_id") or ""
+        if flash.get("sent"):
+            st.success(
+                f"**Case closed** `{cid}` — email sent. "
+                f"{flash.get('detail') or ''} Reopen from Case Log → Replay."
+            )
+        else:
+            st.success(
+                f"**Case closed** `{cid}` — "
+                f"{flash.get('detail') or 'Removed from active inbox.'} "
+                "Reopen from Case Log → Replay on Process."
+            )
+
     src_id = str(st.session_state.get("workspace_source_id") or "").strip()
     banner_case = None
-    if src_id and not src_id.startswith(("manual:", "upload:", "replay:")):
+    replay_id = ""
+    if src_id.startswith("replay:"):
+        replay_id = src_id.split(":", 1)[1].strip()
+        if replay_id:
+            banner_case = db.get_case(replay_id)
+    elif src_id and not src_id.startswith(("manual:", "upload:")):
         banner_case = db.get_case(src_id)
+
+    case_closed = bool(
+        banner_case and str(banner_case.get("status") or "") == db.STATUS_RELEASED
+    )
+
     if banner_case:
         status = str(banner_case.get("status") or "")
         status_label = db.STATUS_LABELS.get(status, status or "—")
@@ -383,13 +458,21 @@ with main:
             or "Untitled request"
         )
         closed = status == db.STATUS_RELEASED
-        eyebrow = "Closed · Released" if closed else "Open in workbench"
+        if replay_id and closed:
+            eyebrow = "Closed · Replay from Case Log"
+        elif replay_id:
+            eyebrow = "Replay from Case Log"
+        elif closed:
+            eyebrow = "Closed"
+        else:
+            eyebrow = "Open in workbench"
         banner_cls = "pd-case-banner released" if closed else "pd-case-banner"
+        display_id = replay_id or src_id
         st.markdown(
             f"""
 <div class="{banner_cls}">
   <div class="eyebrow">{html.escape(eyebrow)}</div>
-  <div class="case-id">{html.escape(src_id)}</div>
+  <div class="case-id">{html.escape(display_id)}</div>
   <div class="subject">{html.escape(str(subject))}</div>
   <div class="meta">
     <span><strong>{html.escape(str(status_label))}</strong></span>
@@ -422,19 +505,22 @@ with main:
             unsafe_allow_html=True,
         )
 
+    section_title = "Closed case" if case_closed else "Active request"
     st.markdown(
-        '<div class="pd-section"><div class="pd-section-title">Active request</div></div>',
+        f'<div class="pd-section"><div class="pd-section-title">{section_title}</div></div>',
         unsafe_allow_html=True,
     )
-    st.text_input("Subject", key="workspace_subject", disabled=role == "lead")
+    # Only lock the form for true closed / lead / audit-replay of a closed case
+    form_locked = role == "lead" or case_closed
+    st.text_input("Subject", key="workspace_subject", disabled=form_locked)
     st.text_area(
         "Message body",
         key="workspace_body",
         height=180,
-        disabled=role == "lead",
+        disabled=form_locked,
     )
 
-    if role == "agent":
+    if role == "agent" and not form_locked:
         with st.expander("Upload request file (optional)", expanded=False):
             uploaded = st.file_uploader(
                 "Accepts .txt / .eml",
@@ -510,6 +596,11 @@ with main:
                 finally:
                     st.session_state._run_busy = False
                 st.rerun()
+    elif role == "agent" and form_locked:
+        st.info(
+            "This case is **Closed**. Reopen it from **Case Log → Replay on Process** "
+            "to put it back on hold and release again."
+        )
 
     result = st.session_state.get("last_result")
     if result:

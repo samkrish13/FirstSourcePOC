@@ -2354,30 +2354,31 @@ div[data-testid="stDataFrame"] td {{
 .pd-out-row .v.warn {{ font-weight: 600; color: {ALERT_INK}; }}
 .pd-out-row .v.ok {{ font-weight: 600; color: #1F6B3A; }}
 
-/* Process inbox | workbench: one page scroll — not two independent panes */
-.stApp:not(:has(.pd-login-anchor)) section.main [data-testid="stHorizontalBlock"] {{
-  align-items: flex-start !important;
-}}
-.stApp:not(:has(.pd-login-anchor)) section.main [data-testid="stHorizontalBlock"] > [data-testid="column"] {{
-  overflow: visible !important;
-  height: auto !important;
-  max-height: none !important;
-}}
-.stApp:not(:has(.pd-login-anchor)) section.main [data-testid="stHorizontalBlock"] > [data-testid="column"]
-  > div,
-.stApp:not(:has(.pd-login-anchor)) section.main [data-testid="stHorizontalBlock"] > [data-testid="column"]
-  [data-testid="stVerticalBlock"],
-.stApp:not(:has(.pd-login-anchor)) section.main [data-testid="stHorizontalBlock"] > [data-testid="column"]
-  [data-testid="stVerticalBlockBorderWrapper"] {{
-  overflow: visible !important;
-  height: auto !important;
-  max-height: none !important;
-}}
-.stApp:not(:has(.pd-login-anchor)) section.main {{
-  overflow-y: visible !important;
-}}
-.stApp:not(:has(.pd-login-anchor)) .block-container {{
-  overflow: visible !important;
+/* Process desk: inbox | workbench scroll independently (desktop) */
+@media (min-width: 901px) {{
+  .stApp:has(.pd-split-desk) section.main [data-testid="stHorizontalBlock"]:has(
+    > [data-testid="column"]:nth-child(2)
+  ) {{
+    align-items: stretch !important;
+    gap: 0.75rem !important;
+  }}
+  .stApp:has(.pd-split-desk) section.main [data-testid="stHorizontalBlock"]:has(
+    > [data-testid="column"]:nth-child(2)
+  ) > [data-testid="column"] {{
+    height: calc(100vh - 148px) !important;
+    max-height: calc(100vh - 148px) !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+  }}
+  .stApp:has(.pd-split-desk) section.main [data-testid="stHorizontalBlock"]:has(
+    > [data-testid="column"]:nth-child(2)
+  ) > [data-testid="column"] > div {{
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }}
 }}
 
 /* Top toaster stack — notifications / alerts / flags */
