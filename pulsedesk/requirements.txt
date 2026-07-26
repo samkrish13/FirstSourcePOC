@@ -1,3 +1,5 @@
-streamlit==1.37.1
-openai==1.40.0
-python-dotenv==1.0.1
+# Streamlit Cloud: need >=1.46 for width="stretch" (buttons/forms).
+# Do not pin 1.37 — login form_submit_button(width=...) crashes there.
+streamlit>=1.46.0,<2
+openai>=1.40.0
+python-dotenv>=1.0.1
