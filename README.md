@@ -7,7 +7,7 @@ PulseDesk is a Streamlit workbench for telecom support ops. Agents pull requests
 
 **Full setup, remediation table, and deploy notes:** [`pulsedesk/README.md`](pulsedesk/README.md)  
 **≤3 min demo path:** [`pulsedesk/docs/PulseDesk_Demo_Script.md`](pulsedesk/docs/PulseDesk_Demo_Script.md)  
-**Submission checklist / email draft:** [`SUBMISSION.md`](SUBMISSION.md) · [`docs/SUBMISSION_EMAIL.md`](docs/SUBMISSION_EMAIL.md)
+**Submission checklist:** [`SUBMISSION.md`](SUBMISSION.md)
 
 There’s also an unrelated stretch POC in [`signalforge/`](signalforge/) — ignore that for this brief.
 

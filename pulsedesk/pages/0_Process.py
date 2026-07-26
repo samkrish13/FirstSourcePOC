@@ -26,6 +26,7 @@ from ui.shell import (
     open_in_workspace,
     page_header,
     page_setup,
+    render_content_box,
     render_mail_case_list,
     render_mailbox_connect_panel,
     render_playbook_rail,
@@ -83,12 +84,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Inbox scrolls independently; workbench is NOT height-locked so Subject/Body/Draft
-# text_areas keep their normal white Streamlit boxes (height panes squash them to 0).
-_PANE_H = 860
+# Twin height panes — inbox + workbench each scroll on their own.
+# Keep Subject, Message body, Run, and full result spine (incl. draft) — nothing removed.
+_PANE_H = 800
 _left_col, _main_col = st.columns([1.15, 1.85], gap="medium")
 left = _left_col.container(height=_PANE_H, border=False)
-main = _main_col
+main = _main_col.container(height=_PANE_H, border=False)
 
 with left:
     if role == "lead":
@@ -567,12 +568,17 @@ with main:
     # Only lock the form for true closed / lead / audit-replay of a closed case
     form_locked = role == "lead" or case_closed
     st.text_input("Subject", key="workspace_subject", disabled=form_locked)
-    st.text_area(
-        "Message body",
-        key="workspace_body",
-        height=180,
-        disabled=form_locked,
-    )
+    # Reliable white box (survives height panes). Edit widget kept when agent can type.
+    _body_now = str(st.session_state.get("workspace_body") or "")
+    render_content_box("Message body", _body_now)
+    if not form_locked:
+        with st.expander("Edit message body", expanded=not _body_now.strip()):
+            st.text_area(
+                "Message body editor",
+                key="workspace_body",
+                height=180,
+                label_visibility="collapsed",
+            )
 
     if role == "agent" and not form_locked:
         with st.expander("Upload request file (optional)", expanded=False):

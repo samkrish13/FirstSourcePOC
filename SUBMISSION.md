@@ -18,7 +18,6 @@ streamlit run app.py
 
 **≤3 min demo path:** REQ-001 → REQ-002 → REQ-003 (see [`pulsedesk/docs/PulseDesk_Demo_Script.md`](pulsedesk/docs/PulseDesk_Demo_Script.md)).  
 **Backup:** ≤3 minute screen recording if the live link fails.  
-**Email draft:** [`docs/SUBMISSION_EMAIL.md`](docs/SUBMISSION_EMAIL.md)  
 Headless proof: `cd pulsedesk && python run_demo.py` → `screenshots/sample_run_log.txt`.
 
 Login stubs: `p.sharma` / `agent` · `r.mehta` / `lead`.
@@ -27,7 +26,7 @@ Login stubs: `p.sharma` / `agent` · `r.mehta` / `lead`.
 
 | POC | PDF |
 |---|---|
-| PulseDesk | [`docs/PulseDesk_Summary.pdf`](docs/PulseDesk_Summary.pdf) (copy also in `pulsedesk/docs/`) |
+| PulseDesk | [`docs/PulseDesk_Summary.pdf`](docs/PulseDesk_Summary.pdf) |
 
 Rebuild: `python pulsedesk/docs/build_summary_deck_pdf.py`
 
@@ -35,10 +34,9 @@ Rebuild: `python pulsedesk/docs/build_summary_deck_pdf.py`
 
 - README with setup + design + remediation: [`pulsedesk/README.md`](pulsedesk/README.md) ← **point judges here**
 - Samples: `pulsedesk/data/sample_requests.json`
-- Outputs: `pulsedesk/screenshots/`, `docs/sample_io/`
+- Outputs: `pulsedesk/screenshots/`
 - Deploy steps: `pulsedesk/README.md` → Deploy
-- Checklist: [`pulsedesk/SUBMISSION.md`](pulsedesk/SUBMISSION.md)
-- Email draft: [`docs/SUBMISSION_EMAIL.md`](docs/SUBMISSION_EMAIL.md)
+- Checklist: this file ([`SUBMISSION.md`](SUBMISSION.md))
 
 ## 4. GitHub
 

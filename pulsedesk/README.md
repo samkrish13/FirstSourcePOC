@@ -114,14 +114,14 @@ pulsedesk/
 ├── db.py                       # SQLite cases / actions / messages
 ├── requirements.txt
 ├── README.md
-├── SUBMISSION.md
 ├── run_demo.py                 # Regenerate demo_outputs + sample_run_log
 ├── data/
 │   ├── sample_requests.json    # Golden + edge samples
 │   └── outage_bulletins.json
 ├── docs/
-│   ├── PulseDesk_Summary.pdf   # 5-slide summary deck
-│   └── REMEDIATION.md
+│   ├── REMEDIATION.md
+│   ├── PulseDesk_Demo_Script.md
+│   └── build_summary_deck_pdf.py  # writes ../docs/PulseDesk_Summary.pdf
 ├── integrations/
 │   └── gmail_inbox.py          # Optional IMAP sync
 ├── pages/
@@ -152,11 +152,11 @@ pulsedesk/
 
 | Asset | Location |
 |---|---|
-| 5-slide summary | [`docs/PulseDesk_Summary.pdf`](docs/PulseDesk_Summary.pdf) |
+| 5-slide summary | [`../docs/PulseDesk_Summary.pdf`](../docs/PulseDesk_Summary.pdf) |
 | Screenshots / panels | [`screenshots/`](screenshots/) |
 | All-branch demo log | [`screenshots/sample_run_log.txt`](screenshots/sample_run_log.txt) |
 | Structured demo outputs | [`screenshots/demo_outputs.json`](screenshots/demo_outputs.json) |
-| Checklist | [`SUBMISSION.md`](SUBMISSION.md) |
+| Checklist | [`../SUBMISSION.md`](../SUBMISSION.md) |
 
 Regenerate demo artifacts:
 

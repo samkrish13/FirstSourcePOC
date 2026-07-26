@@ -6,7 +6,6 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-OUT_LOCAL = ROOT / "PulseDesk_Summary.pdf"
 OUT_REPO = ROOT.parent.parent / "docs" / "PulseDesk_Summary.pdf"
 
 LIVE = "https://pulsedesk-firstsource.streamlit.app"
@@ -183,9 +182,8 @@ def build(path: Path) -> None:
 
 
 def main() -> None:
-    build(OUT_LOCAL)
+    OUT_REPO.parent.mkdir(parents=True, exist_ok=True)
     build(OUT_REPO)
-    print(f"Wrote {OUT_LOCAL} ({OUT_LOCAL.stat().st_size} bytes)")
     print(f"Wrote {OUT_REPO} ({OUT_REPO.stat().st_size} bytes)")
 
 

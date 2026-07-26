@@ -2387,30 +2387,46 @@ div[data-testid="stDataFrame"] td {{
   word-break: break-word;
 }}
 
-/* Process desk scroll panes — st.container(height=…) owns overflow; tidy borders */
+/* Process desk — twin st.container(height) scroll panes (do not kill height on desktop) */
+.stApp:has(.pd-split-desk) section.main [data-testid="stHorizontalBlock"] {{
+  align-items: stretch !important;
+}}
 .stApp:has(.pd-split-desk) section.main [data-testid="stVerticalBlockBorderWrapper"]:has(
   [data-testid="stVerticalBlock"]
 ) {{
   border: none !important;
 }}
-/* Height-constrained panes squash text_area to 0 — force readable body/draft boxes */
+.stApp:has(.pd-split-desk) [data-testid="stTextInput"] input {{
+  color: {INK} !important;
+  background: #FFFFFF !important;
+}}
+/* Edit widgets inside height panes — keep usable when open */
 .stApp:has(.pd-split-desk) [data-testid="stTextArea"] {{
-  min-height: 180px !important;
+  min-height: 160px !important;
   opacity: 1 !important;
   visibility: visible !important;
 }}
 .stApp:has(.pd-split-desk) [data-testid="stTextArea"] textarea,
 .stApp:has(.pd-split-desk) [data-testid="stTextArea"] [data-baseweb="textarea"],
 .stApp:has(.pd-split-desk) [data-testid="stTextArea"] [data-baseweb="base-input"] {{
-  min-height: 160px !important;
-  height: auto !important;
+  min-height: 150px !important;
+  height: 150px !important;
   opacity: 1 !important;
   color: {INK} !important;
   background: #FFFFFF !important;
 }}
+.pd-box-label {{
+  font-size: 12px;
+  font-weight: 600;
+  color: {MUTED};
+  margin: 0 0 6px 0;
+}}
 @media (max-width: 900px) {{
-  /* Stacked on phones — let page scroll; don't trap in short panes */
-  .stApp:has(.pd-split-desk) section.main [data-testid="stVerticalBlockBorderWrapper"] {{
+  /* Stacked phones only — allow page scroll; keep desktop twin panes intact */
+  .stApp:has(.pd-split-desk) section.main [data-testid="stHorizontalBlock"]
+    > [data-testid="column"]
+    > div
+    > [data-testid="stVerticalBlockBorderWrapper"] {{
     max-height: none !important;
     height: auto !important;
   }}
@@ -4006,6 +4022,37 @@ def _render_html(fragment: str) -> None:
         st.markdown(compact, unsafe_allow_html=True)
 
 
+def render_content_box(label: str, text: str) -> None:
+    """White bordered text box that survives st.container(height=…) (unlike text_area display).
+
+    Uses st.html with inline styles so the box never falls back to plain gray text.
+    Does not collapse newlines (unlike _render_html).
+    """
+    safe = html.escape((text or "").strip() or "—")
+    label_html = (
+        f'<div class="pd-box-label" style="font-size:12px;font-weight:600;color:#5B6570;'
+        f'margin:0 0 6px 0;">{html.escape(label)}</div>'
+        if (label or "").strip()
+        else ""
+    )
+    # Inline styles: markdown/class injection is unreliable; height panes must not blank this
+    fragment = (
+        f'<div class="pd-content-box" style="margin:0 0 12px 0;">'
+        f"{label_html}"
+        f'<pre class="pd-draft-pre" style="display:block;margin:0;padding:14px 16px;'
+        f"min-height:120px;max-height:320px;overflow:auto;background:#FFFFFF;"
+        f"border:1px solid #D9DEE7;border-radius:8px;"
+        f"box-shadow:inset 0 1px 2px rgba(31,41,51,0.04);"
+        f"font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:14px;"
+        f'line-height:1.5;color:#1F2933;white-space:pre-wrap;word-break:break-word;">'
+        f"{safe}</pre></div>"
+    )
+    if hasattr(st, "html"):
+        st.html(fragment)
+    else:
+        st.markdown(fragment, unsafe_allow_html=True)
+
+
 def _toast_decision(
     kind: str, case_id: str, *, send_meta: dict[str, Any] | None = None
 ) -> None:
@@ -4518,14 +4565,8 @@ def render_result_spine(result: dict[str, Any]) -> None:
         else:
             draft_now = draft
     elif draft:
-        # Real Streamlit white text box (no key → value= always paints; safe outside height pane)
-        st.text_area(
-            "Draft",
-            value=draft,
-            height=220,
-            disabled=True,
-            label_visibility="collapsed",
-        )
+        # HTML box — disabled text_area collapses inside st.container(height=…)
+        render_content_box("Draft customer response", draft)
     else:
         st.warning(
             "No draft body found for this case. Re-run the playbook, or open from "
