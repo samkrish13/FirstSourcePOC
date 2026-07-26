@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
 import db
 from integrations.gmail_inbox import (
-    MAILBOX_ADDRESS,
     gmail_configured,
+    list_mailboxes,
     sync_gmail_inbox,
 )
 from ui.shell import (
@@ -25,11 +27,27 @@ from ui.shell import (
     page_header,
     page_setup,
     render_mail_case_list,
+    render_mailbox_connect_panel,
     render_playbook_rail,
     render_result_spine,
     seed_work_inbox_if_empty,
+    workspace_needs_case_reload,
 )
 from workflows.pipeline import process_request
+
+# Active work — hide released from Mine / Unassigned
+_WORK_STATUSES = [
+    db.STATUS_OPEN,
+    db.STATUS_ON_HOLD,
+    db.STATUS_ESCALATED,
+    db.STATUS_RETURNED,
+]
+
+
+def _is_composing() -> bool:
+    src = str(st.session_state.get("workspace_source_id") or "")
+    return src.startswith("manual:") or src.startswith("upload:")
+
 
 page_setup("Process")
 if not chrome("process"):
@@ -42,13 +60,14 @@ seed_work_inbox_if_empty()
 page_header(
     "Process" if role == "agent" else "Process · Tech Lead",
     (
-        "Work inbox → claim or compose → run playbook → release or escalate with a reason."
+        "Pick a case from the inbox, run the playbook, then release or escalate."
         if role == "agent"
-        else "Escalated queue — acknowledge, approve release, or return with a note the agent will see."
+        else "Review escalated cases — acknowledge, approve release, or return to the agent."
     ),
+    eyebrow="Workbench",
 )
 
-left, main = st.columns([1.25, 1.95], gap="medium")
+left, main = st.columns([1.15, 1.85], gap="medium")
 
 with left:
     if role == "lead":
@@ -62,43 +81,86 @@ with left:
         escalated = filter_cases_by_query(escalated, q)
         focus = st.session_state.get("lead_queue_focus")
         ids = {c["case_id"] for c in escalated}
-        if escalated and focus not in ids:
+        if escalated and focus not in ids and not _is_composing():
             focus = escalated[0]["case_id"]
             st.session_state.lead_queue_focus = focus
 
-        clicked = render_mail_case_list(
+        actions = render_mail_case_list(
             escalated,
-            selected_id=focus,
+            selected_id=None if _is_composing() else focus,
             key_prefix="lead_mail",
             title="Escalated",
         )
-        if clicked:
-            if open_case_in_workspace(clicked):
-                st.session_state.lead_queue_focus = clicked
+        if actions.get("open"):
+            if open_case_in_workspace(str(actions["open"])):
+                st.session_state.lead_queue_focus = actions["open"]
                 st.rerun()
-        elif focus and focus != st.session_state.get("workspace_source_id"):
-            if open_case_in_workspace(focus):
+        elif focus and not _is_composing() and workspace_needs_case_reload(focus):
+            if open_case_in_workspace(str(focus)):
+                st.session_state.lead_queue_focus = focus
                 st.rerun()
 
         if not escalated:
-            st.caption("No escalated cases. Agents escalate Needs Review work to you.")
+            st.markdown(
+                """
+<div class="pd-empty">
+  <div class="pd-empty-title">No escalated cases</div>
+  <div class="pd-empty-hint">Agents escalate Needs Review work here for lead decision.</div>
+</div>
+                """,
+                unsafe_allow_html=True,
+            )
 
         render_playbook_rail(result=st.session_state.get("last_result"))
 
     else:
-        filt = st.radio(
+        # Apply filter changes from Claim/Unassign before the widget mounts
+        pending_filt = st.session_state.pop("_pending_inbox_filter", None)
+        if pending_filt in ("Mine", "Unassigned", "All"):
+            st.session_state.inbox_filter = pending_filt
+        pending_mailbox = st.session_state.pop("_pending_mailbox_view", None)
+        if pending_mailbox:
+            st.session_state.mailbox_view_filter = pending_mailbox
+
+        filt = st.segmented_control(
             "Assignment",
-            ["Mine", "Unassigned", "All"],
-            horizontal=True,
+            options=["Mine", "Unassigned", "All"],
+            default="Mine",
             key="inbox_filter",
-        )
+        ) or "Mine"
         me = user.get("username") or ""
+        mailboxes = list_mailboxes()
+        mailbox_ids = [m["id"] for m in mailboxes]
+        mailbox_labels = {
+            m["id"]: f"{m['label']} · {m['address']}" for m in mailboxes
+        }
+
+        # Filter which linked inbox to view (All = every case)
+        known_sources = db.list_source_mailboxes()
+        view_options = ["All mailboxes"] + known_sources
+        if mailboxes:
+            for m in mailboxes:
+                if m["address"] not in view_options:
+                    view_options.append(m["address"])
+        mailbox_view = st.selectbox(
+            "Show cases from",
+            view_options,
+            key="mailbox_view_filter",
+        )
+        source_filter = None if mailbox_view == "All mailboxes" else mailbox_view
+
         if filt == "Mine":
-            inbox = db.list_inbox(assigned_to=me)
+            inbox = db.list_inbox(
+                assigned_to=me, statuses=_WORK_STATUSES, source_mailbox=source_filter
+            )
         elif filt == "Unassigned":
-            inbox = db.list_inbox(unassigned_only=True)
+            inbox = db.list_inbox(
+                unassigned_only=True,
+                statuses=_WORK_STATUSES,
+                source_mailbox=source_filter,
+            )
         else:
-            inbox = db.list_inbox()
+            inbox = db.list_inbox(source_mailbox=source_filter)
 
         q = st.text_input(
             "Search inbox",
@@ -108,10 +170,11 @@ with left:
         )
         inbox = filter_cases_by_query(inbox, q)
 
-        tool_a, tool_b, tool_c = st.columns(3)
+        tool_a, tool_b = st.columns(2)
         with tool_a:
             if st.button("Compose", width="stretch", type="primary", key="compose_new"):
                 compose_new_request()
+                st.session_state.selected_inbox_id = None
                 st.rerun()
         with tool_b:
             if st.button(
@@ -121,26 +184,51 @@ with left:
                 help="Coach — compare how two playbook branches differ.",
             ):
                 open_branch_compare_dialog()
-        with tool_c:
-            sync = st.button(
-                "Sync Gmail",
-                width="stretch",
-                key="sync_gmail",
-                help=f"Pull new mail from {MAILBOX_ADDRESS} into this inbox.",
+
+        # One control: pick mailbox + sync
+        # `_sync_busy` only disables across runs; clear leftovers from interrupted syncs
+        st.session_state._sync_busy = False
+        sync = False
+        sync_pick = None
+        if mailboxes:
+            pick_col, sync_col = st.columns([2.4, 1.0], vertical_alignment="bottom")
+            with pick_col:
+                sync_pick = st.selectbox(
+                    "Sync Gmail",
+                    mailbox_ids,
+                    format_func=lambda i: mailbox_labels.get(i, i),
+                    key="sync_mailbox_pick",
+                    help="Choose which linked mailbox to pull into this inbox.",
+                )
+            with sync_col:
+                sync = st.button(
+                    "Sync",
+                    width="stretch",
+                    key="sync_gmail",
+                    help="Pull recent mail from the mailbox on the left.",
+                )
+            if len(mailboxes) == 1:
+                st.caption(f"Linked · `{mailboxes[0]['address']}`")
+            else:
+                st.caption(f"{len(mailboxes)} mailboxes linked — pick one, then Sync.")
+        else:
+            st.caption(
+                "No connected mailbox yet · open **Connect / manage mailboxes** below, "
+                "send an invite, then paste the Google App Password."
             )
-        st.caption(f"Linked mailbox · `{MAILBOX_ADDRESS}`")
+
         if sync:
-            if not gmail_configured():
+            if not gmail_configured() or not sync_pick:
                 st.warning(
-                    "Add a Google **App Password** for "
-                    f"`{MAILBOX_ADDRESS}` in `.streamlit/secrets.toml` "
-                    "(see `.streamlit/secrets.toml.example`) or set "
-                    "`GMAIL_APP_PASSWORD` in `.env`, then Sync again."
+                    "Connect a mailbox first: **Connect / manage mailboxes** → "
+                    "Send invitation → paste App Password → Verify & connect."
                 )
             else:
-                with st.spinner(f"Syncing {MAILBOX_ADDRESS}…"):
+                label = mailbox_labels.get(sync_pick, sync_pick)
+                with st.spinner(f"Syncing {label}…"):
                     try:
                         report = sync_gmail_inbox(
+                            mailbox_id=sync_pick,
                             limit=15,
                             actor=user.get("name") or "gmail-sync",
                         )
@@ -152,8 +240,9 @@ with left:
                     n_skip = len(report.get("skipped") or [])
                     n_err = len(report.get("errors") or [])
                     st.success(
-                        f"Synced **{report.get('fetched', 0)}** messages · "
-                        f"**{n_new}** new cases · **{n_skip}** already in inbox"
+                        f"**{report.get('label') or report.get('mailbox')}** · "
+                        f"synced **{report.get('fetched', 0)}** · "
+                        f"**{n_new}** new · **{n_skip}** already in inbox"
                         + (f" · **{n_err}** errors" if n_err else "")
                     )
                     if report.get("errors"):
@@ -161,38 +250,78 @@ with left:
                     if n_new:
                         st.rerun()
 
+        composing = _is_composing()
         focus = st.session_state.get("selected_inbox_id")
         ids = {c["case_id"] for c in inbox}
-        if inbox and focus not in ids:
+        if inbox and focus not in ids and not composing:
             focus = inbox[0]["case_id"]
             st.session_state.selected_inbox_id = focus
 
-        clicked = render_mail_case_list(
+        actions = render_mail_case_list(
             inbox,
-            selected_id=focus,
+            selected_id=None if composing else focus,
             key_prefix="work_mail",
             title="Inbox",
+            allow_claim=True,
+            claim_username=me,
+            assignment_view=filt,
         )
-        if clicked:
-            if open_case_in_workspace(clicked):
+        if actions.get("open"):
+            cid = str(actions["open"])
+            st.session_state.selected_inbox_id = cid
+            if open_case_in_workspace(cid):
                 st.rerun()
-        elif focus and focus != st.session_state.get("workspace_source_id"):
+            else:
+                st.error(f"Could not load case `{cid}` into the workbench.")
+        if actions.get("claim"):
+            if not st.session_state.get("_claim_busy"):
+                st.session_state._claim_busy = True
+                try:
+                    cid = str(actions["claim"])
+                    db.assign_case(cid, me, updated_by=user.get("name"))
+                    st.session_state._pending_inbox_filter = "Mine"
+                    st.session_state.selected_inbox_id = cid
+                    if not open_case_in_workspace(cid):
+                        st.error(f"Claimed `{cid}` but could not load it.")
+                    else:
+                        st.toast(f"Claimed {cid} — now in Mine")
+                finally:
+                    st.session_state._claim_busy = False
+                st.rerun()
+        if actions.get("unassign"):
+            if not st.session_state.get("_unassign_busy"):
+                st.session_state._unassign_busy = True
+                try:
+                    cid = str(actions["unassign"])
+                    db.assign_case(cid, None, updated_by=user.get("name"))
+                    st.session_state._pending_inbox_filter = "Unassigned"
+                    st.toast(f"Unassigned {cid}")
+                finally:
+                    st.session_state._unassign_busy = False
+                st.rerun()
+        if focus and focus in ids and not composing and workspace_needs_case_reload(focus):
             if open_case_in_workspace(focus):
                 st.rerun()
 
-        if focus and focus in ids:
-            c_claim, c_rel = st.columns(2)
-            with c_claim:
-                if st.button("Claim", width="stretch", key="claim_case"):
-                    db.assign_case(focus, me, updated_by=user.get("name"))
-                    open_case_in_workspace(focus)
-                    st.rerun()
-            with c_rel:
-                if st.button("Unassign", width="stretch", key="unassign_case"):
-                    db.assign_case(focus, None, updated_by=user.get("name"))
-                    st.rerun()
-        elif not inbox:
-            st.caption("No cases in this filter. Compose a request or switch filter.")
+        if not inbox:
+            st.markdown(
+                """
+<div class="pd-empty">
+  <div class="pd-empty-title">No cases in this filter</div>
+  <div class="pd-empty-hint">Compose a request, sync Gmail, or switch Mine / Unassigned / All.</div>
+</div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with st.expander(
+            "Connect / manage mailboxes",
+            expanded=(
+                not mailboxes
+                or st.session_state.get("side_panel_action") == "mailbox"
+            ),
+        ):
+            render_mailbox_connect_panel(actor=user.get("name"))
 
         with st.expander("Load demo sample into form", expanded=False):
             samples = all_inbox_items()
@@ -216,9 +345,74 @@ with left:
         render_playbook_rail(result=st.session_state.get("last_result"))
 
 with main:
-    src_id = st.session_state.get("workspace_source_id") or "—"
+    # Apply upload/form writes before Subject/Body widgets exist (Streamlit forbids
+    # mutating widget keys after those widgets are instantiated on the same run).
+    pending = st.session_state.pop("_pending_workspace", None)
+    if isinstance(pending, dict):
+        st.session_state.workspace_subject = str(pending.get("subject") or "")
+        st.session_state.workspace_body = str(pending.get("body") or "")
+        st.session_state.workspace_source_id = str(pending.get("source_id") or "")
+        st.session_state.selected_inbox_id = pending.get("selected_inbox_id")
+        st.session_state.last_result = pending.get("last_result")
+
+    src_id = str(st.session_state.get("workspace_source_id") or "").strip()
+    banner_case = None
+    if src_id and not src_id.startswith(("manual:", "upload:", "replay:")):
+        banner_case = db.get_case(src_id)
+    if banner_case:
+        status = str(banner_case.get("status") or "")
+        status_label = db.STATUS_LABELS.get(status, status or "—")
+        assignee = str(banner_case.get("assigned_to") or "").strip()
+        if assignee and assignee == (user.get("username") or ""):
+            assign_label = "Assigned to you"
+        elif assignee:
+            assign_label = f"Assigned to {assignee}"
+        else:
+            assign_label = "Unassigned"
+        subject = (
+            st.session_state.get("workspace_subject")
+            or banner_case.get("subject")
+            or "Untitled request"
+        )
+        st.markdown(
+            f"""
+<div class="pd-case-banner">
+  <div class="eyebrow">Open in workbench</div>
+  <div class="case-id">{html.escape(src_id)}</div>
+  <div class="subject">{html.escape(str(subject))}</div>
+  <div class="meta">
+    <span><strong>{html.escape(str(status_label))}</strong></span>
+    <span>{html.escape(assign_label)}</span>
+  </div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+    elif src_id:
+        draft_subj = st.session_state.get("workspace_subject") or "Draft request"
+        st.markdown(
+            f"""
+<div class="pd-case-banner">
+  <div class="eyebrow">Open in workbench</div>
+  <div class="case-id">{html.escape(src_id)}</div>
+  <div class="subject">{html.escape(str(draft_subj))}</div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+<div class="pd-case-banner empty">
+  <div class="eyebrow">No case open</div>
+  <div class="subject">Select a case from the inbox</div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
     st.markdown(
-        f'<div class="pd-rail-title">Active case · <span class="pd-mono">{src_id}</span></div>',
+        '<div class="pd-section"><div class="pd-section-title">Active request</div></div>',
         unsafe_allow_html=True,
     )
     st.text_input("Subject", key="workspace_subject", disabled=role == "lead")
@@ -248,39 +442,62 @@ with main:
                         subj = line.strip()
                     else:
                         body_lines.append(line)
-                st.session_state.workspace_subject = subj or uploaded.name
-                st.session_state.workspace_body = "\n".join(body_lines).strip() or raw
-                st.session_state.workspace_source_id = f"upload:{uploaded.name}"
-                st.session_state.last_result = None
+                st.session_state._pending_workspace = {
+                    "subject": subj or uploaded.name,
+                    "body": "\n".join(body_lines).strip() or raw,
+                    "source_id": f"upload:{uploaded.name}",
+                    "selected_inbox_id": None,
+                    "last_result": None,
+                }
                 st.rerun()
 
-        force_options = ["(auto)"] + [key for key, *_ in PLAYBOOKS]
-        force_pick = st.selectbox(
-            "DEMO ONLY — force playbook override",
-            force_options,
-            key="force_branch",
-        )
+        with st.expander("Advanced — force playbook", expanded=False):
+            force_options = ["(auto)"] + [key for key, *_ in PLAYBOOKS]
+            force_pick = st.selectbox(
+                "Override classification",
+                force_options,
+                format_func=lambda k: (
+                    "(auto — classify naturally)"
+                    if k == "(auto)"
+                    else f"{BRANCH_LABELS.get(k, k)}"
+                ),
+                key="force_branch",
+            )
 
-        run = st.button("Run playbook", type="primary", width="stretch")
-        if run or bool(st.session_state.pop("auto_run", False)):
-            subject = (st.session_state.workspace_subject or "").strip() or "(no subject)"
+        run_busy = bool(st.session_state.get("_run_busy"))
+        run = st.button(
+            "Run playbook",
+            type="primary",
+            width="stretch",
+            disabled=run_busy,
+            key="run_playbook",
+        )
+        if (run or bool(st.session_state.pop("auto_run", False))) and not run_busy:
+            subject = (st.session_state.workspace_subject or "").strip()
             body = (st.session_state.workspace_body or "").strip()
             if not body:
                 st.warning("Message body is required.")
             else:
+                if not subject:
+                    st.info("No subject entered — using “(no subject)”.")
+                    subject = "(no subject)"
                 force_type = None if force_pick == "(auto)" else force_pick
-                with st.spinner("Running playbook…"):
-                    st.session_state.last_result = process_request(
-                        subject,
-                        body,
-                        force_type=force_type,
-                        assigned_to=user.get("username"),
-                        actor=user.get("name"),
+                st.session_state._run_busy = True
+                try:
+                    with st.spinner("Running playbook…"):
+                        st.session_state.last_result = process_request(
+                            subject,
+                            body,
+                            force_type=force_type,
+                            assigned_to=user.get("username"),
+                            actor=user.get("name"),
+                        )
+                    st.session_state.workspace_source_id = st.session_state.last_result.get(
+                        "case_id"
                     )
-                st.session_state.workspace_source_id = st.session_state.last_result.get(
-                    "case_id"
-                )
-                st.session_state.selected_inbox_id = st.session_state.workspace_source_id
+                    st.session_state.selected_inbox_id = st.session_state.workspace_source_id
+                finally:
+                    st.session_state._run_busy = False
                 st.rerun()
 
     result = st.session_state.get("last_result")
@@ -288,6 +505,22 @@ with main:
         st.markdown("---")
         render_result_spine(result)
     elif role == "lead":
-        st.caption("Select an escalated case from the left queue.")
+        st.markdown(
+            """
+<div class="pd-empty">
+  <div class="pd-empty-title">Select an escalated case</div>
+  <div class="pd-empty-hint">Open a case from the left queue to review and decide.</div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
     else:
-        st.caption("Open a case from the inbox, or compose and Run playbook.")
+        st.markdown(
+            """
+<div class="pd-empty">
+  <div class="pd-empty-title">Nothing selected</div>
+  <div class="pd-empty-hint">Open a case from the inbox, or compose and run a playbook.</div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )

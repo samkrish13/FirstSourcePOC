@@ -20,15 +20,28 @@ if not chrome("case_log"):
     st.stop()
 page_header(
     "Case Log",
-    "Persisted cases with status, assignment, actions, and messages.",
+    "Audit trail for processed cases — status, assignee, SLA, and message history.",
+    eyebrow="Audit & history",
 )
 
 db.init_db()
 cases = db.list_cases(limit=200)
 
 if not cases:
-    st.info("No cases yet. Sign in as an agent and run work from Process.")
+    st.markdown(
+        """
+<div class="pd-empty">
+  <div class="pd-empty-title">No cases yet</div>
+  <div class="pd-empty-hint">Run a playbook from Process to create the first audit entry.</div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
 else:
+    st.markdown(
+        '<div class="pd-section"><div class="pd-section-title">Recent cases</div></div>',
+        unsafe_allow_html=True,
+    )
     st.dataframe(
         [
             {

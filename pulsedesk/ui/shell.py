@@ -17,7 +17,6 @@ import db
 from workflows.llm import (
     BRANCH_LABELS,
     CONFIDENCE_REVIEW_THRESHOLD,
-    llm_available,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,7 +29,6 @@ SURFACE = "#FFFFFF"
 LINE = "#D8DCE3"
 MUTED = "#5B6570"
 SOFT = "#EBF0F5"
-SIDEBAR = "#1E2933"
 ALERT_BG = "#FEF3C7"
 ALERT_BORDER = "#D97706"
 ALERT_INK = "#92400E"
@@ -54,8 +52,9 @@ def load_samples() -> dict[str, Any]:
 def all_inbox_items(data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     data = data or load_samples()
     return [
-        *( {**g, "lane": "golden"} for g in data.get("golden") or [] ),
-        *( {**e, "lane": "edge"} for e in data.get("edge_cases") or [] ),
+        {**g, "lane": "golden"} for g in (data.get("golden") or [])
+    ] + [
+        {**e, "lane": "edge"} for e in (data.get("edge_cases") or [])
     ]
 
 
@@ -72,6 +71,7 @@ USERS: dict[str, dict[str, str]] = {
         "role": "agent",
         "initials": "PS",
         "password": "agent",
+        "email": "p.sharma@pulsedesk.demo",
     },
     "r.mehta": {
         "username": "r.mehta",
@@ -79,8 +79,10 @@ USERS: dict[str, dict[str, str]] = {
         "role": "lead",
         "initials": "RM",
         "password": "lead",
+        "email": "r.mehta@pulsedesk.demo",
     },
 }
+
 
 ESCALATE_REASONS = [
     "Low confidence / ambiguous intent",
@@ -117,10 +119,49 @@ def ensure_state() -> None:
         "tour_done": {},
         "show_tour": False,
         "tour_step": 0,
+        "tour_closed": False,
+        "tour_applied_step": -1,
+        "tour_sample_case_id": None,
+        "tour_sample_id": "REQ-001",
+        "side_panel_action": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+    _restore_login_from_url()
+
+
+def _account_session_payload(account: dict[str, str]) -> dict[str, str]:
+    return {
+        "username": account["username"],
+        "name": account["name"],
+        "role": account["role"],
+        "initials": account["initials"],
+        "email": account.get("email") or f"{account['username']}@pulsedesk.demo",
+    }
+
+
+def _persist_login(username: str) -> None:
+    """Keep desk login across browser refresh via URL (until Sign out)."""
+    st.query_params["pd_user"] = username
+
+
+def _clear_persisted_login() -> None:
+    try:
+        del st.query_params["pd_user"]
+    except Exception:
+        params = {k: v for k, v in st.query_params.items() if k != "pd_user"}
+        st.query_params.clear()
+        st.query_params.update(params)
+
+
+def _restore_login_from_url() -> None:
+    if isinstance(st.session_state.get("current_user"), dict):
+        return
+    username = str(st.query_params.get("pd_user") or "").strip()
+    account = USERS.get(username)
+    if account:
+        st.session_state.current_user = _account_session_payload(account)
 
 
 def current_user() -> dict[str, str] | None:
@@ -135,6 +176,420 @@ def active_role() -> str:
     return "agent"
 
 
+def _find_user_by_login(email_or_user: str) -> dict[str, str] | None:
+    key = (email_or_user or "").strip().lower()
+    if not key:
+        return None
+    for account in USERS.values():
+        if account["username"].lower() == key or account.get("email", "").lower() == key:
+            return account
+    return None
+
+
+def _inject_login_css() -> None:
+    """Narrow centered login. Constrains container & card width."""
+    st.markdown(
+        f"""
+<style>
+/* Kill sidebar + collapsed control on login (beats workbench force-open rules). */
+.stApp:has(.pd-login-anchor) section[data-testid="stSidebar"],
+.stApp:has(.pd-login-anchor) section[data-testid="stSidebar"][aria-expanded="false"],
+.stApp:has(.pd-login-anchor) section[data-testid="stSidebar"][aria-expanded="true"],
+.stApp:has(.pd-login-anchor) div[data-testid="stSidebarCollapsedControl"],
+.stApp:has(.pd-login-anchor) [data-testid="stSidebarCollapseButton"],
+.stApp:has(.pd-login-anchor) [data-testid="collapsedControl"] {{
+  display: none !important;
+  visibility: hidden !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  transform: none !important;
+  position: fixed !important;
+  left: -100vw !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
+}}
+.stApp:has(.pd-login-anchor) [data-testid="stAppViewContainer"],
+.stApp:has(.pd-login-anchor) [data-testid="stAppViewContainer"] > .main,
+.stApp:has(.pd-login-anchor) section.main {{
+  margin-left: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}}
+header[data-testid="stHeader"] {{ display: none !important; }}
+
+.stApp, [data-testid="stAppViewContainer"], section.main {{
+  background: {BG} !important;
+}}
+
+/* Center and shrink main page container when on login page */
+.stApp:has(.pd-login-anchor) .block-container,
+div[data-testid="stAppViewContainer"]:has(.pd-login-anchor) .block-container,
+section.main:has(.pd-login-anchor) .block-container,
+[data-testid="stMainBlockContainer"]:has(.pd-login-anchor) {{
+  max-width: 440px !important;
+  width: min(440px, calc(100vw - 32px)) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding: 48px 8px 40px !important;
+}}
+
+/* Login Card styling */
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.pd-login-anchor) {{
+  background: {SURFACE} !important;
+  border: 1px solid {LINE} !important;
+  border-radius: 16px !important;
+  box-shadow: 0 12px 32px rgba(16, 24, 40, 0.06), 0 2px 6px rgba(16, 24, 40, 0.04) !important;
+  padding: 32px 28px 24px !important;
+  width: 100% !important;
+  max-width: 440px !important;
+  margin: 0 auto !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}}
+
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.pd-login-anchor) [data-testid="stForm"],
+div[data-testid="stForm"] {{
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}}
+
+/* Hide "Press Enter to submit form" caption */
+[data-testid="InputInstructions"],
+div[data-testid="stForm"] [data-testid="stCaptionContainer"],
+div[data-testid="stForm"] .stCaption {{
+  display: none !important;
+}}
+
+.pd-login-hero {{
+  text-align: center;
+  margin: 0 0 20px;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+}}
+.pd-login-logo-row {{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}}
+.pd-login-dots {{
+  display: grid;
+  grid-template-columns: repeat(5, 3px);
+  grid-template-rows: repeat(3, 3px);
+  gap: 4px;
+  opacity: 0.4;
+}}
+.pd-login-dots span {{
+  width: 3px; height: 3px; border-radius: 50%; background: {MUTED};
+}}
+.pd-login-mark {{
+  width: 48px; height: 48px; border-radius: 12px;
+  background: {BRAND};
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 0 6px 18px rgba(43, 108, 176, 0.28);
+}}
+.pd-login-hero h1 {{
+  margin: 0 0 6px;
+  color: {INK};
+  font-size: 23px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}}
+.pd-login-hero .sub {{
+  color: {MUTED};
+  font-size: 14px;
+  font-weight: 400;
+}}
+.pd-login-hero .sub .link {{
+  color: {BRAND};
+  font-weight: 600;
+  cursor: pointer;
+}}
+.pd-login-or {{
+  display: flex; align-items: center; gap: 12px;
+  margin: 18px 0 15px;
+  color: {MUTED};
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+}}
+.pd-login-or::before, .pd-login-or::after {{
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: {LINE};
+}}
+
+div[data-testid="stForm"] [data-testid="stTextInput"] label,
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-testid="stWidgetLabel"] {{
+  display: none !important;
+}}
+div[data-testid="stForm"] [data-testid="stTextInput"] input {{
+  background-color: {SOFT} !important;
+  color: {INK} !important;
+  border: 1px solid {LINE} !important;
+  border-radius: 10px !important;
+  min-height: 44px !important;
+  padding-left: 42px !important;
+  font-family: "IBM Plex Sans", system-ui, sans-serif !important;
+  font-size: 15px !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+}}
+div[data-testid="stForm"] [data-testid="stTextInput"] input:focus {{
+  border-color: {BRAND} !important;
+  box-shadow: 0 0 0 3px rgba(43, 108, 176, 0.15) !important;
+}}
+div[data-testid="stForm"] [data-testid="stTextInput"] input::placeholder {{
+  color: {MUTED} !important;
+}}
+div[data-testid="stForm"] input[aria-label="Email"] {{
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' fill='none' stroke='%235B6570' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='4' width='14' height='10' rx='2'/%3E%3Cpath d='m2 5 7 5 7-5'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: 14px center !important;
+  background-size: 18px !important;
+}}
+div[data-testid="stForm"] input[aria-label="Password"] {{
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' fill='none' stroke='%235B6570' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='8' width='10' height='8' rx='1.5'/%3E%3Cpath d='M6 8V6a3 3 0 0 1 6 0v2'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: 14px center !important;
+  background-size: 18px !important;
+  padding-right: 44px !important;
+}}
+
+/* Single password box — strip stacked wrappers around the eye */
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-testid="stTextInputRootElement"],
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-baseweb="base-input"],
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-baseweb="input"] {{
+  display: flex !important;
+  align-items: center !important;
+  background: {SOFT} !important;
+  background-color: {SOFT} !important;
+  border: 1px solid {LINE} !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  outline: none !important;
+  overflow: hidden !important;
+  gap: 0 !important;
+}}
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-testid="stTextInputRootElement"] > *,
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-baseweb="base-input"] > *,
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-baseweb="input"] > * {{
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}}
+div[data-testid="stForm"] [data-testid="stTextInput"] input {{
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  border-radius: 0 !important;
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+}}
+div[data-testid="stForm"] [data-testid="stTextInput"] input:focus {{
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}}
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-testid="stTextInputRootElement"]:focus-within,
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-baseweb="base-input"]:focus-within,
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-baseweb="input"]:focus-within {{
+  border-color: {BRAND} !important;
+  box-shadow: 0 0 0 3px rgba(43, 108, 176, 0.15) !important;
+}}
+/* Eye button + every nested chrome around it */
+div[data-testid="stForm"] [data-testid="stTextInput"] button,
+div[data-testid="stForm"] [data-testid="stTextInput"] button *,
+div[data-testid="stForm"] [data-testid="stTextInput"] button::before,
+div[data-testid="stForm"] [data-testid="stTextInput"] button::after,
+div[data-testid="stForm"] [data-testid="stTextInput"] [class*="StyledButton"],
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-testid="stTooltipHoverTarget"],
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-testid="stTooltipHoverTarget"] > div,
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-testid="stElementContainer"],
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-testid="stVerticalBlock"],
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-testid="column"],
+div[data-testid="stForm"] [data-testid="stTextInput"] [data-testid="stHorizontalBlock"] {{
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}}
+div[data-testid="stForm"] [data-testid="stTextInput"] button {{
+  color: {MUTED} !important;
+  min-height: 32px !important;
+  max-height: 32px !important;
+  height: 32px !important;
+  width: 32px !important;
+  min-width: 32px !important;
+  padding: 0 !important;
+  margin: 0 6px 0 0 !important;
+  border-radius: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  position: relative !important;
+  top: 0 !important;
+  transform: none !important;
+}}
+div[data-testid="stForm"] [data-testid="stTextInput"] button:hover {{
+  background: transparent !important;
+  background-color: transparent !important;
+  color: {INK} !important;
+}}
+div[data-testid="stForm"] [data-testid="stTextInput"] button svg,
+div[data-testid="stForm"] [data-testid="stTextInput"] button [data-testid="stIconMaterial"],
+div[data-testid="stForm"] [data-testid="stTextInput"] button span {{
+  background: transparent !important;
+  color: inherit !important;
+  fill: currentColor !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1 !important;
+}}
+
+div[data-testid="stForm"] [data-testid="stFormSubmitButton"] button,
+div[data-testid="stForm"] button[kind="primaryFormSubmit"],
+div[data-testid="stForm"] button[data-testid="baseButton-primaryFormSubmit"],
+div[data-testid="stForm"] button[kind="primary"] {{
+  background: {BRAND} !important;
+  border: none !important;
+  border-radius: 10px !important;
+  min-height: 44px !important;
+  font-weight: 600 !important;
+  font-size: 15px !important;
+  font-family: "IBM Plex Sans", system-ui, sans-serif !important;
+  box-shadow: 0 2px 4px rgba(43, 108, 176, 0.2) !important;
+  margin-top: 8px !important;
+  width: 100% !important;
+}}
+div[data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {{
+  background: #245a96 !important;
+}}
+
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.pd-login-anchor) [data-testid="stButton"] button {{
+  background: {SURFACE} !important;
+  border: 1px solid {LINE} !important;
+  border-radius: 10px !important;
+  min-height: 42px !important;
+  color: {INK} !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  box-shadow: none !important;
+  transition: all 0.15s ease !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.pd-login-anchor) [data-testid="stButton"] button:hover {{
+  background: {SOFT} !important;
+  border-color: #CBD5E1 !important;
+}}
+
+.pd-login-hint {{
+  margin-top: 18px;
+  padding: 12px;
+  background: {SOFT};
+  border: 1px solid {LINE};
+  border-radius: 12px;
+  margin-bottom: 20px;
+  box-sizing: border-box;
+  width: 100%;
+}}
+.pd-login-hint-header {{
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: {MUTED};
+  margin-bottom: 9px;
+}}
+.pd-login-cred-card {{
+  background: #FFFFFF;
+  border: 1px solid {LINE};
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 7px;
+}}
+.pd-login-cred-card:last-child {{
+  margin-bottom: 0;
+}}
+.pd-login-cred-top {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}}
+.pd-login-badge {{
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}}
+.pd-login-badge.agent {{
+  background: #E0F2FE;
+  color: #0369A1;
+  border: 1px solid #BAE6FD;
+}}
+.pd-login-badge.lead {{
+  background: #FEF3C7;
+  color: #B45309;
+  border: 1px solid #FDE68A;
+}}
+.pd-login-pass-pill {{
+  font-size: 11px;
+  color: {MUTED};
+  background: {SOFT};
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid {LINE};
+}}
+.pd-login-pass-pill strong {{
+  color: {INK};
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 600;
+}}
+.pd-login-email-text {{
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  color: {INK};
+  word-break: break-all;
+}}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _complete_login(account: dict[str, str]) -> None:
+    st.session_state.current_user = _account_session_payload(account)
+    _persist_login(account["username"])
+    done = st.session_state.setdefault("tour_done", {})
+    if not done.get(account["username"]):
+        start_guided_tour()
+    st.rerun()
+
+
 def require_login() -> dict[str, str] | None:
     """Gate UI behind stub login. Returns user or None while login form is shown."""
     ensure_state()
@@ -142,39 +597,90 @@ def require_login() -> dict[str, str] | None:
     if user:
         return user
 
-    st.markdown(
-        f"""
-<div class="pd-page-head">
-  <h1>PulseDesk sign-in</h1>
-  <div class="desc">Use your desk account. Lead actions only appear for Tech Lead accounts.</div>
+    _inject_login_css()
+
+    with st.container(border=True):
+        dots = "".join("<span></span>" for _ in range(15))
+        st.markdown(
+            f"""
+<div class="pd-login-anchor">
+  <div class="pd-login-hero">
+    <div class="pd-login-logo-row">
+      <div class="pd-login-dots">{dots}</div>
+      <div class="pd-login-mark" aria-hidden="true">PD</div>
+      <div class="pd-login-dots">{dots}</div>
+    </div>
+    <h1>Welcome Back</h1>
+    <div class="sub">Don't have an account yet? <span class="link">Sign up</span></div>
+  </div>
 </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    with st.form("login_form"):
-        username = st.selectbox(
-            "Account",
-            list(USERS.keys()),
-            format_func=lambda u: f"{USERS[u]['name']} · {USERS[u]['role'].title()}",
+            """,
+            unsafe_allow_html=True,
         )
-        password = st.text_input("Password", type="password")
-        st.caption("Demo passwords: **agent** (P. Sharma) · **lead** (R. Mehta)")
-        submitted = st.form_submit_button("Sign in", type="primary", width="stretch")
-    if submitted:
-        account = USERS.get(username) or {}
-        if account.get("password") == password:
-            st.session_state.current_user = {
-                "username": account["username"],
-                "name": account["name"],
-                "role": account["role"],
-                "initials": account["initials"],
-            }
-            done = st.session_state.setdefault("tour_done", {})
-            if not done.get(account["username"]):
-                st.session_state.show_tour = True
-                st.session_state.tour_step = 0
-            st.rerun()
-        st.error("Incorrect password.")
+
+        with st.form("login_form", border=False, clear_on_submit=False):
+            email = st.text_input(
+                "Email",
+                placeholder="Email address",
+                label_visibility="collapsed",
+                key="login_email",
+            )
+            password = st.text_input(
+                "Password",
+                type="password",
+                placeholder="Password",
+                label_visibility="collapsed",
+                key="login_password",
+            )
+            submitted = st.form_submit_button("Login", type="primary", width="stretch")
+
+        if submitted:
+            account = _find_user_by_login(email)
+            if not (email or "").strip():
+                st.error("Email required.")
+                return None
+            if not (password or "").strip():
+                st.error("Password required.")
+                return None
+            if account and account.get("password") == password:
+                _complete_login(account)
+            st.error("Incorrect email or password.")
+
+        st.markdown('<div class="pd-login-or">OR</div>', unsafe_allow_html=True)
+
+        c1, c2, c3 = st.columns(3, gap="small")
+        with c1:
+            apple = st.button("", width="stretch", key="oauth_apple")
+        with c2:
+            google = st.button("G", width="stretch", key="oauth_google")
+        with c3:
+            x_btn = st.button("𝕏", width="stretch", key="oauth_x")
+
+        if apple or google or x_btn:
+            st.info("Social login is not enabled in this demo — use email + password.")
+
+        st.markdown(
+            """
+<div class="pd-login-hint">
+  <div class="pd-login-hint-header">Demo Accounts</div>
+  <div class="pd-login-cred-card">
+    <div class="pd-login-cred-top">
+      <span class="pd-login-badge agent">Agent</span>
+      <span class="pd-login-pass-pill">Password: <strong>agent</strong></span>
+    </div>
+    <div class="pd-login-email-text">p.sharma@pulsedesk.demo</div>
+  </div>
+  <div class="pd-login-cred-card">
+    <div class="pd-login-cred-top">
+      <span class="pd-login-badge lead">Tech Lead</span>
+      <span class="pd-login-pass-pill">Password: <strong>lead</strong></span>
+    </div>
+    <div class="pd-login-email-text">r.mehta@pulsedesk.demo</div>
+  </div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
     return None
 
 
@@ -182,124 +688,602 @@ def logout() -> None:
     st.session_state.current_user = None
     st.session_state.last_result = None
     st.session_state.show_tour = False
+    st.session_state.tour_closed = True
+    _clear_persisted_login()
     st.rerun()
 
 
-def _tour_steps_for(user: dict[str, str]) -> list[tuple[str, str]]:
+# Hands-on tour sample — first golden billing ticket
+_TOUR_SAMPLE_ID = "REQ-001"
+_PAGE_PROCESS = "pages/0_Process.py"
+_PAGE_CASE_LOG = "pages/1_Case_Log.py"
+_PAGE_PLAYBOOKS = "pages/2_Playbooks.py"
+
+
+def _tour_sample_item() -> dict[str, Any] | None:
+    sid = str(st.session_state.get("tour_sample_id") or _TOUR_SAMPLE_ID)
+    for item in all_inbox_items():
+        if str(item.get("id")) == sid:
+            return item
+    items = all_inbox_items()
+    return items[0] if items else None
+
+
+def _tour_steps_for(user: dict[str, str]) -> list[dict[str, Any]]:
+    """Page-aware walkthrough steps. Each step can load sample data and switch pages."""
     name = user.get("name") or "you"
+    sample = _tour_sample_item()
+    sample_id = str((sample or {}).get("id") or _TOUR_SAMPLE_ID)
+    sample_subj = str((sample or {}).get("subject") or "sample request")
+    branch_key = str((sample or {}).get("branch") or "billing_dispute")
+    branch_name = BRANCH_LABELS.get(branch_key, branch_key)
+    case_id = st.session_state.get("tour_sample_case_id")
+
     if user.get("role") == "lead":
         return [
-            (
-                "Welcome — you're signed in as Tech Lead",
-                f"You are **{name}**. You only see **escalated** work. "
-                "Agent release/edit controls stay hidden.",
-            ),
-            (
-                "1 · Escalated queue",
-                "Left rail lists cases agents escalated. Open one to review classification, "
-                "timeline, and draft.",
-            ),
-            (
-                "2 · Lead actions",
-                "**Acknowledge** ownership, **Approve release** (simulated until email), or "
-                "**Return to agent** with a **required reason** and a **note the agent will see**.",
-            ),
-            (
-                "3 · Status that sticks",
-                "Lifecycle is **Open → On hold → Escalated → Released / Returned**, "
-                "with who/when on the case.",
-            ),
+            {
+                "title": "Welcome — Tech Lead walkthrough",
+                "body": (
+                    f"You are **{name}**. This short tour moves you across PulseDesk pages "
+                    "the way a real lead works: **Process** (escalations) → **Case Log** "
+                    "(audit) → **Playbooks** (what agents run)."
+                ),
+                "page": _PAGE_PROCESS,
+                "badge": "Overview",
+            },
+            {
+                "title": "Process · Escalated queue",
+                "body": (
+                    "On **Process**, the left rail only lists cases agents **escalated**. "
+                    "Open one to review classification, timeline, and the draft. "
+                    "Agent Edit / Release controls stay hidden on your account."
+                ),
+                "page": _PAGE_PROCESS,
+                "action": "focus_escalated",
+                "badge": "Process",
+                "hint": "Left rail → Escalated. Pick a card, then use lead actions on the right.",
+            },
+            {
+                "title": "Process · Lead actions",
+                "body": (
+                    "**Acknowledge** takes ownership. **Approve release** sends the reply "
+                    "(simulated until email is wired). **Return to agent** needs a "
+                    "**reason** plus a **note the agent will see** on the case."
+                ),
+                "page": _PAGE_PROCESS,
+                "badge": "Process",
+            },
+            {
+                "title": "Case Log · Full history",
+                "body": (
+                    "Every run is persisted here: status, assignment, actions, and messages. "
+                    "Use **Replay on Process** when you want the spine back in the workbench."
+                ),
+                "page": _PAGE_CASE_LOG,
+                "badge": "Case Log",
+            },
+            {
+                "title": "Playbooks · Six branches",
+                "body": (
+                    "Agents run one of six remediation strategies per case. "
+                    "Know these queues so escalations make sense when they land on your desk."
+                ),
+                "page": _PAGE_PLAYBOOKS,
+                "badge": "Playbooks",
+            },
+            {
+                "title": "You're ready",
+                "body": (
+                    "Back on **Process**, work the escalated queue. "
+                    "Lifecycle: **Open → On hold → Escalated → Released / Returned**."
+                ),
+                "page": _PAGE_PROCESS,
+                "badge": "Done",
+            },
         ]
+
+    case_line = (
+        f"Your tour case is **`{case_id}`** — it also appears in Case Log."
+        if case_id
+        else "After you run the sample, a real case id is written to Case Log."
+    )
     return [
-        (
-            "Welcome — you're signed in as an agent",
-            f"You are **{name}**. Only your account sees agent actions "
-            "(Edit / Release / Escalate). Tech Leads sign in separately — "
-            "no costume role switcher.",
-        ),
-        (
-            "1 · Work inbox (left)",
-            "Cases arrive in **Mine / Unassigned / All**. Use **Claim** to take ownership. "
-            "Each row shows status, received time, and an **SLA countdown** that updates as you work.",
-        ),
-        (
-            "2 · Compose or load a case",
-            "**Compose** for a blank ticket, or open a case from the inbox. "
-            "Optional: expand **Load demo sample** for practice data.",
-        ),
-        (
-            "3 · Run playbook",
-            "Click **Run playbook**. PulseDesk classifies the request, picks a branch, builds a draft, "
-            "and logs everything. Low confidence → **On hold / Needs Review**.",
-        ),
-        (
-            "4 · Read the spine",
-            "Scroll the result: **Why this branch**, **What I'm unsure about**, timeline, draft, "
-            "then **Queue · ticket · follow-up** in plain ops language.",
-        ),
-        (
-            "5 · Release or escalate",
-            "On hold cases: **Edit → Save → Release draft**, or **Escalate to lead** with a "
-            "**reason code**. Outbound stays labeled simulated until email is wired.",
-        ),
-        (
-            "6 · Coach compare (optional)",
-            "**Coach: compare playbooks** opens a popup to see how e.g. Billing vs Outage differ — "
-            "training only, nothing written to Case Log.",
-        ),
+        {
+            "title": "Welcome — work a real sample",
+            "body": (
+                f"You are **{name}**. This tour is hands-on: we load golden sample "
+                f"**{sample_id}** ({branch_name}), run the playbook on **Process**, "
+                "then open **Case Log** and **Playbooks** so you see how the desk fits together."
+            ),
+            "page": _PAGE_PROCESS,
+            "badge": "Overview",
+        },
+        {
+            "title": f"Process · Load sample {sample_id}",
+            "body": (
+                f"We just placed **{sample_id}** into the workbench:\n\n"
+                f"> {sample_subj}\n\n"
+                "Look at **Subject** and **Message body** on the right — same fields you'd "
+                "get from Gmail sync, Compose, or **Load demo sample**. "
+                "Left rail is your work inbox (Mine / Unassigned / All)."
+            ),
+            "page": _PAGE_PROCESS,
+            "action": "load_sample",
+            "badge": "Process",
+            "hint": "Right panel shows the sample ticket. Next step runs the playbook on it.",
+        },
+        {
+            "title": "Process · Run the playbook",
+            "body": (
+                f"PulseDesk will classify this as **{branch_name}**, build a draft reply, "
+                "and log every step. Low confidence parks the case **On hold / Needs Review**.\n\n"
+                "Use **Run sample now** below (same as the **Run playbook** button on the page)."
+            ),
+            "page": _PAGE_PROCESS,
+            "action": "ensure_sample_loaded",
+            "badge": "Process",
+            "cta": "run_sample",
+            "hint": "After it runs, scroll the result spine under the form.",
+        },
+        {
+            "title": "Process · Read your result",
+            "body": (
+                f"{case_line}\n\n"
+                "On the page behind this dialog: **Why this branch**, "
+                "**What I'm unsure about**, the action timeline, the draft, then "
+                "**Queue · ticket · follow-up**. That spine is what you hand to a lead or customer."
+            ),
+            "page": _PAGE_PROCESS,
+            "action": "ensure_sample_run",
+            "badge": "Process",
+            "hint": "Scroll the Process main column to review the live spine.",
+        },
+        {
+            "title": "Process · Finish the ticket",
+            "body": (
+                "When you're ready to act: **Edit → Save → Release draft**, or "
+                "**Escalate to lead** with a reason code. "
+                "You can also **Claim** Unassigned inbox rows, **Sync Gmail**, or "
+                "**Coach: compare** two playbooks without writing Case Log."
+            ),
+            "page": _PAGE_PROCESS,
+            "badge": "Process",
+        },
+        {
+            "title": "Case Log · Your sample is saved",
+            "body": (
+                f"Open the case we just created"
+                + (f" (**`{case_id}`**)" if case_id else "")
+                + ". Inspect actions and messages — this is the audit trail interviewers "
+                "and leads care about. **Replay on Process** brings it back to the workbench."
+            ),
+            "page": _PAGE_CASE_LOG,
+            "action": "focus_tour_case",
+            "badge": "Case Log",
+        },
+        {
+            "title": f"Playbooks · {branch_name} and the other five",
+            "body": (
+                f"Your sample used the **{branch_name}** branch. This page lists all six "
+                "strategies (queue, steps, outputs). Process picks one per case; "
+                "Case Log stores what actually ran."
+            ),
+            "page": _PAGE_PLAYBOOKS,
+            "badge": "Playbooks",
+        },
+        {
+            "title": "You're ready to work",
+            "body": (
+                f"Back on **Process** with **{sample_id}** still in context. "
+                "Try another sample from **Load demo sample**, claim an inbox case, "
+                "or connect Gmail. Replay this tour anytime from the profile menu."
+            ),
+            "page": _PAGE_PROCESS,
+            "badge": "Done",
+        },
     ]
 
 
-@st.dialog("PulseDesk guided tour", width="large")
-def _guided_tour_dialog() -> None:
-    user = current_user() or {}
+def _apply_tour_action(action: str | None, user: dict[str, str]) -> None:
+    """Side effects when a tour step becomes active (load sample, run, focus case)."""
+    if not action:
+        return
+    if action in ("load_sample", "ensure_sample_loaded"):
+        item = _tour_sample_item()
+        if not item:
+            return
+        # Don't wipe a live tour result when merely ensuring the form is filled
+        if action == "ensure_sample_loaded" and st.session_state.get("tour_sample_case_id"):
+            return
+        if action == "load_sample" or not (
+            st.session_state.get("workspace_subject") or ""
+        ).strip():
+            open_in_workspace(item)
+            st.session_state._pending_inbox_filter = "All"
+            if "mailbox_view_filter" in st.session_state:
+                st.session_state._pending_mailbox_view = "All mailboxes"
+        return
+
+    if action == "ensure_sample_run":
+        if not st.session_state.get("tour_sample_case_id"):
+            _tour_run_sample(user)
+        return
+
+    if action == "focus_tour_case":
+        cid = st.session_state.get("tour_sample_case_id")
+        if cid:
+            st.session_state.case_log_focus = cid
+        return
+
+    if action == "focus_escalated":
+        rows = db.list_escalated_cases(limit=1)
+        if rows:
+            cid = str(rows[0].get("case_id") or "")
+            if cid and open_case_in_workspace(cid):
+                st.session_state.lead_queue_focus = cid
+        return
+
+
+def _tour_run_sample(user: dict[str, str]) -> dict[str, Any] | None:
+    """Run the loaded tour sample through the real playbook pipeline."""
+    from workflows.pipeline import process_request
+
+    item = _tour_sample_item()
+    subject = (st.session_state.get("workspace_subject") or "").strip()
+    body = (st.session_state.get("workspace_body") or "").strip()
+    if not body and item:
+        open_in_workspace(item)
+        subject = (item.get("subject") or "").strip()
+        body = (item.get("body") or "").strip()
+    if not body:
+        return None
+
+    sample_id = str((item or {}).get("id") or _TOUR_SAMPLE_ID)
+    result = process_request(
+        subject or "(no subject)",
+        body,
+        assigned_to=user.get("username"),
+        actor=user.get("name") or "tour",
+    )
+    case_id = str(result.get("case_id") or "")
+    st.session_state.last_result = result
+    st.session_state.workspace_source_id = case_id
+    st.session_state.selected_inbox_id = case_id
+    st.session_state.tour_sample_case_id = case_id
+    st.session_state.case_log_focus = case_id
+    st.session_state.tour_sample_id = sample_id
+    return result
+
+
+def _go_tour_step(new_step: int, user: dict[str, str]) -> None:
     steps = _tour_steps_for(user)
     n = len(steps)
-    step = int(st.session_state.get("tour_step") or 0)
-    step = max(0, min(step, n - 1))
-    title, body = steps[step]
-
-    st.progress((step + 1) / n, text=f"Step {step + 1} of {n}")
-    st.markdown(f"### {title}")
-    st.markdown(body)
-    st.caption("Replay anytime from **Take tour** in the top bar.")
-
-    b1, b2, b3 = st.columns(3)
-    with b1:
-        if st.button("Back", width="stretch", disabled=step <= 0, key="tour_back"):
-            st.session_state.tour_step = step - 1
-            st.rerun()
-    with b2:
-        if st.button("Skip tour", width="stretch", key="tour_skip"):
-            _finish_tour(user.get("username") or "")
-            st.rerun()
-    with b3:
-        if step >= n - 1:
-            if st.button("Finish", type="primary", width="stretch", key="tour_finish"):
-                _finish_tour(user.get("username") or "")
-                st.rerun()
-        elif st.button("Next", type="primary", width="stretch", key="tour_next"):
-            st.session_state.tour_step = step + 1
-            st.rerun()
+    new_step = max(0, min(int(new_step), n - 1))
+    st.session_state.tour_step = new_step
+    st.session_state.tour_applied_step = -1
+    st.session_state.show_tour = True
+    page = steps[new_step].get("page")
+    if page:
+        st.switch_page(str(page))
+    st.rerun()
 
 
 def _finish_tour(username: str) -> None:
+    """Close tour permanently for this user (until Take tour is chosen)."""
     st.session_state.show_tour = False
     st.session_state.tour_step = 0
+    st.session_state.tour_applied_step = -1
+    st.session_state.tour_closed = True
     done = st.session_state.setdefault("tour_done", {})
     if username:
         done[username] = True
 
 
-def start_guided_tour() -> None:
-    """Open / restart the first-time user tour."""
+def start_guided_tour(*, switch_to_process: bool = False) -> None:
+    """Open / restart the first-time user tour on Process with a fresh sample path."""
+    st.session_state.tour_closed = False
     st.session_state.show_tour = True
     st.session_state.tour_step = 0
+    st.session_state.tour_applied_step = -1
+    st.session_state.tour_sample_case_id = None
+    st.session_state.tour_sample_id = _TOUR_SAMPLE_ID
+    if switch_to_process:
+        st.switch_page(_PAGE_PROCESS)
 
 
 def render_guided_tour_if_needed() -> None:
-    if st.session_state.get("show_tour"):
-        _guided_tour_dialog()
+    """In-page tour card — never use st.dialog (dialogs reopen on every widget click)."""
+    user = current_user() or {}
+    username = str(user.get("username") or "")
+    done = st.session_state.setdefault("tour_done", {})
+
+    if st.session_state.get("tour_closed"):
+        st.session_state.show_tour = False
+        return
+    if done.get(username) and not st.session_state.get("show_tour"):
+        return
+    if not st.session_state.get("show_tour"):
+        return
+
+    steps = _tour_steps_for(user)
+    n = len(steps)
+    step = int(st.session_state.get("tour_step") or 0)
+    step = max(0, min(step, n - 1))
+    spec = steps[step]
+
+    badge = spec.get("badge") or ""
+    with st.container(border=True):
+        st.markdown("##### PulseDesk guided tour")
+        st.progress(
+            (step + 1) / n, text=f"Step {step + 1} of {n} · {badge}".strip(" ·")
+        )
+        st.markdown(f"### {spec['title']}")
+        st.markdown(str(spec.get("body") or ""))
+        if spec.get("hint"):
+            st.info(spec["hint"])
+
+        item = _tour_sample_item()
+        if item and user.get("role") != "lead":
+            branch = BRANCH_LABELS.get(str(item.get("branch") or ""), item.get("branch"))
+            case_id = st.session_state.get("tour_sample_case_id")
+            st.markdown(
+                f'<div class="pd-tour-sample">'
+                f'<span class="tag">Sample</span> '
+                f'<strong>{_esc_html(item.get("id"))}</strong> · {_esc_html(branch)}'
+                + (
+                    f' · case <code>{_esc_html(case_id)}</code>'
+                    if case_id
+                    else ""
+                )
+                + f'<div class="subj">{_esc_html(item.get("subject") or "")}</div>'
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        if spec.get("cta") == "run_sample":
+            already = bool(st.session_state.get("tour_sample_case_id"))
+            if already:
+                st.success(
+                    f"Sample already run → **{st.session_state.tour_sample_case_id}**. "
+                    "Continue to read the spine, or run again."
+                )
+            run_label = "Run sample again" if already else "Run sample now"
+            if st.button(
+                run_label, type="primary", width="stretch", key="tour_run_sample"
+            ):
+                with st.spinner("Running playbook on sample…"):
+                    result = _tour_run_sample(user)
+                if result:
+                    st.session_state.tour_step = min(step + 1, n - 1)
+                    st.session_state.tour_applied_step = -1
+                    st.rerun()
+                else:
+                    st.error("Could not run sample — load a demo sample first.")
+
+        st.caption("Replay anytime from the profile menu → **Take tour**. Use **Skip tour** to dismiss.")
+
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            if st.button("Back", width="stretch", disabled=step <= 0, key="tour_back"):
+                _go_tour_step(step - 1, user)
+        with b2:
+            if st.button("Skip tour", width="stretch", key="tour_skip"):
+                _finish_tour(username)
+                st.rerun()
+        with b3:
+            if step >= n - 1:
+                if st.button(
+                    "Finish", type="primary", width="stretch", key="tour_finish"
+                ):
+                    _finish_tour(username)
+                    st.switch_page(_PAGE_PROCESS)
+            elif st.button("Next", type="primary", width="stretch", key="tour_next"):
+                if spec.get("cta") == "run_sample" and not st.session_state.get(
+                    "tour_sample_case_id"
+                ):
+                    _tour_run_sample(user)
+                _go_tour_step(step + 1, user)
+
+
+
+def prepare_tour_workspace() -> None:
+    """Apply the active tour step's sample/page side effects before page widgets render."""
+    if st.session_state.get("tour_closed") or not st.session_state.get("show_tour"):
+        return
+    user = current_user()
+    if not user:
+        return
+    steps = _tour_steps_for(user)
+    if not steps:
+        return
+    step = int(st.session_state.get("tour_step") or 0)
+    step = max(0, min(step, len(steps) - 1))
+    applied = int(st.session_state.get("tour_applied_step", -1))
+    if applied == step:
+        return
+    _apply_tour_action(steps[step].get("action"), user)
+    st.session_state.tour_applied_step = step
+
+
+def render_mailbox_connect_panel(*, actor: str | None = None) -> None:
+    """In-app Gmail connect: invite → help for app password → verify / revoke / remove."""
+    from integrations.gmail_inbox import complete_mailbox_auth
+
+    st.markdown("##### Connect a mailbox")
+    st.caption(
+        "Mailboxes only sync after authentication here. "
+        "Send an invite → follow **How to get an App Password** → paste it → Verify. "
+        "You can revoke an invite or remove an address at any time."
+    )
+
+    with st.expander("How to get a Google App Password (help)", expanded=False):
+        st.markdown(
+            """
+**Do this while signed into the Gmail you invited.**
+
+1. Open **[Google Account → App passwords](https://myaccount.google.com/apppasswords)**  
+   (If the page says unavailable: turn on **2-Step Verification** first under Security, then return.)
+2. Under **Select app**, choose **Mail** (or Other → type `PulseDesk`).
+3. Click **Generate**. Copy the **16-character** password (spaces are fine).
+4. Back in PulseDesk, open the invite card → paste it → **Verify & connect**.
+
+**Notes**
+- Use an **App Password**, not your normal Gmail login password.
+- App Passwords only appear after 2-Step Verification is on.
+- If login still fails, revoke the invite, create a new App Password, and invite again.
+            """
+        )
+
+    rows = db.list_linked_mailbox_rows()
+    focus_help = st.session_state.pop("mailbox_help_focus", None)
+
+    if rows:
+        for row in rows:
+            status = str(row.get("status") or "")
+            label = db.MAILBOX_STATUS_LABELS.get(status, status)
+            tone = {
+                db.MAILBOX_CONNECTED: "ok",
+                db.MAILBOX_INVITED: "warn",
+                db.MAILBOX_FAILED: "bad",
+            }.get(status, "muted")
+            mid = str(row["id"])
+            addr = str(row.get("address") or "")
+            st.markdown(
+                f"""
+<div class="pd-mb-card">
+  <div class="pd-mb-top">
+    <strong>{_esc_html(row.get("label") or "")}</strong>
+    <span class="pd-mb-addr">{_esc_html(addr)}</span>
+  </div>
+  <div class="pd-mb-status {tone}">{_esc_html(label)}</div>
+  <div class="pd-mb-detail">{_esc_html(row.get("status_detail") or "")}</div>
+</div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # Always offer help + remove; invite/failed also get auth + revoke
+            help_open = focus_help == mid or status == db.MAILBOX_FAILED
+            with st.expander(f"Help · App Password for {addr}", expanded=help_open):
+                st.markdown(
+                    f"""
+Signed into **`{addr}`**:
+
+1. Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+2. Enable **2-Step Verification** if Google asks
+3. Generate an app password named **PulseDesk**
+4. Paste the 16 characters in **Complete authentication** below
+                    """
+                )
+                st.link_button(
+                    "Open Google App Passwords",
+                    "https://myaccount.google.com/apppasswords",
+                    width="stretch",
+                )
+
+            if status in (db.MAILBOX_INVITED, db.MAILBOX_FAILED):
+                with st.expander(
+                    f"Complete authentication · {addr}",
+                    expanded=(status == db.MAILBOX_FAILED or focus_help == mid),
+                ):
+                    pwd = st.text_input(
+                        "App password",
+                        type="password",
+                        key=f"mb_pwd_{mid}",
+                        placeholder="xxxx xxxx xxxx xxxx",
+                    )
+                    if st.button(
+                        "Verify & connect",
+                        type="primary",
+                        width="stretch",
+                        key=f"mb_verify_{mid}",
+                        disabled=bool(st.session_state.get(f"_mb_busy_{mid}")),
+                    ):
+                        cleaned = "".join((pwd or "").split())
+                        if len(cleaned) < 8:
+                            st.warning("Paste a Google App Password (16 characters) before verifying.")
+                        else:
+                            st.session_state[f"_mb_busy_{mid}"] = True
+                            with st.spinner("Verifying with Gmail…"):
+                                ok, msg = complete_mailbox_auth(mid, cleaned)
+                            st.session_state.pop(f"_mb_busy_{mid}", None)
+                            if ok:
+                                st.success(msg)
+                                st.rerun()
+                            st.error(msg)
+
+                a1, a2 = st.columns(2)
+                with a1:
+                    if st.button(
+                        "Revoke invitation",
+                        width="stretch",
+                        key=f"mb_revoke_{mid}",
+                        help="Cancel this invite. The address is removed until you invite again.",
+                    ):
+                        db.delete_mailbox(mid)
+                        st.toast(f"Invitation revoked for {addr}")
+                        st.rerun()
+                with a2:
+                    if st.button(
+                        "Remove address",
+                        width="stretch",
+                        key=f"mb_remove_{mid}",
+                        help="Delete this mailbox from PulseDesk.",
+                    ):
+                        db.delete_mailbox(mid)
+                        st.toast(f"Removed {addr}")
+                        st.rerun()
+            else:
+                # Connected (or other) — allow remove / disconnect
+                b1, b2 = st.columns(2)
+                with b1:
+                    if st.button(
+                        "Remove address",
+                        width="stretch",
+                        key=f"mb_remove_{mid}",
+                        help="Disconnect and delete this mailbox from PulseDesk.",
+                    ):
+                        db.delete_mailbox(mid)
+                        st.toast(f"Removed {addr}")
+                        st.rerun()
+                with b2:
+                    if st.button(
+                        "Show App Password help",
+                        width="stretch",
+                        key=f"mb_help_btn_{mid}",
+                    ):
+                        st.session_state.mailbox_help_focus = mid
+                        st.rerun()
+
+    with st.form("mailbox_invite_form", clear_on_submit=True):
+        st.markdown("**Send connection invite**")
+        address = st.text_input(
+            "Gmail address",
+            placeholder="care@yourdomain.com or name@gmail.com",
+        )
+        label = st.text_input("Display name (optional)", placeholder="Ops inbox")
+        submitted = st.form_submit_button(
+            "Send invitation", type="primary", width="stretch"
+        )
+    if submitted:
+        addr = (address or "").strip()
+        if not addr or "@" not in addr:
+            st.warning("Enter a valid Gmail address before sending an invite.")
+        else:
+            try:
+                invited = db.invite_mailbox(
+                    addr, label=(label or "").strip() or None, invited_by=actor
+                )
+                st.session_state.mailbox_help_focus = invited["id"]
+                st.success(
+                    f"Invitation sent to **{invited['address']}**. "
+                    "Use **Help · App Password** on that card, then paste the password to verify."
+                )
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Could not create invite: {exc}")
 
 
 def _clear_draft_keys() -> None:
@@ -347,298 +1331,528 @@ code, pre, .pd-mono {{
 }}
 
 .stApp {{ background: {BG}; }}
-section.main > div {{ max-width: 100% !important; }}
-div[data-testid="stAppViewContainer"] > .main {{ overflow-x: hidden; }}
-#MainMenu, footer {{ visibility: hidden; }}
-header[data-testid="stHeader"] {{ display: none !important; }}
-section[data-testid="stSidebar"],
-div[data-testid="stSidebarCollapsedControl"] {{ display: none !important; }}
-
-.block-container {{
+section.main > div {{ max-width: 100% !important; width: 100% !important; }}
+div[data-testid="stAppViewContainer"] {{
+  width: 100% !important;
+}}
+div[data-testid="stAppViewContainer"] > .main {{
+  overflow-x: hidden;
+  width: 100% !important;
+}}
+div[data-testid="stMainBlockContainer"],
+section.main .block-container,
+.stMain .block-container {{
   max-width: 100% !important;
   width: 100% !important;
-  padding-top: 0.35rem !important;
-  padding-bottom: 2rem !important;
-  padding-left: 1.25rem !important;
-  padding-right: 1.25rem !important;
+  padding: 8px 20px 24px 20px !important;
+}}
+#MainMenu, footer {{ visibility: hidden; }}
+header[data-testid="stHeader"],
+div[data-testid="stToolbar"],
+div[data-testid="stDecoration"],
+[data-testid="stAppToolbar"],
+.stAppHeader {{
+  display: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
 }}
 
-.pd-primary {{
-  width: 100vw;
-  max-width: 100vw;
-  position: relative;
-  left: 50%;
-  margin-left: -50vw;
-  margin-right: -50vw;
-  box-sizing: border-box;
-  padding-left: max(1.25rem, calc((100vw - 100%) / 2 + 1.25rem));
-  padding-right: max(1.25rem, calc((100vw - 100%) / 2 + 1.25rem));
-}}
-
-.pd-nav-row {{
-  margin: 0 0 0.45rem 0;
-  padding-bottom: 0.35rem;
-  border-bottom: 1px solid {LINE};
-}}
-
-.pd-role-avatar {{
-  width: 22px; height: 22px;
-  border-radius: 50%;
-  background: {BRAND};
-  color: #fff;
-  font-size: 0.62rem;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}}
-
-/* Profile popover — circular avatar, aligned with nav */
-div[data-testid="stPopover"] {{
+/* Keep the workbench nav permanently expanded — never on the login screen. */
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"],
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"][aria-expanded="false"] {{
   display: flex !important;
-  justify-content: flex-end !important;
-  align-items: center !important;
-  height: 100%;
-  min-height: 2.5rem;
-}}
-div[data-testid="stPopover"] > div {{
-  display: flex !important;
-  align-items: center !important;
-}}
-div[data-testid="stPopover"] button {{
-  border-radius: 50% !important;
-  width: 2.25rem !important;
-  height: 2.25rem !important;
-  min-width: 2.25rem !important;
-  min-height: 2.25rem !important;
-  max-width: 2.25rem !important;
+  visibility: visible !important;
+  min-width: 264px !important;
+  width: 264px !important;
+  max-width: 264px !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  background: #FFFFFF !important;
+  border-right: 1px solid #E2E8F0 !important;
+  box-shadow: 1px 0 4px rgba(0, 0, 0, 0.03) !important;
+  position: relative !important;
+  z-index: 90 !important;
   padding: 0 !important;
   margin: 0 !important;
-  background: {BRAND} !important;
-  color: #fff !important;
-  border: 2px solid #fff !important;
-  box-shadow: 0 0 0 1px {LINE} !important;
-  font-size: 0.7rem !important;
-  font-weight: 700 !important;
-  letter-spacing: 0.02em;
-  line-height: 1 !important;
-  overflow: visible !important;
-}}
-div[data-testid="stPopover"] button:hover {{
-  background: #1E4E8C !important;
-  color: #fff !important;
-  border-color: #fff !important;
-}}
-div[data-testid="stPopover"] button p,
-div[data-testid="stPopover"] button span {{
-  color: #fff !important;
-  font-weight: 700 !important;
-  line-height: 1 !important;
+  margin-left: 0 !important;
+  left: 0 !important;
+  top: 0 !important;
+  transform: none !important;
+  overflow: hidden !important;
 }}
 
-.pd-profile-menu .name {{
-  font-weight: 700;
-  font-size: 0.95rem;
-  color: {INK};
-  margin: 0;
-}}
-.pd-profile-menu .role {{
-  font-size: 0.8rem;
-  color: {MUTED};
-  margin: 0.15rem 0 0.65rem 0;
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] button[kind="header"],
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"],
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="collapsedControl"],
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stSidebarHeader"],
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] header,
+.stApp:not(:has(.pd-login-anchor)) div[data-testid="stSidebarCollapsedControl"],
+.stApp:not(:has(.pd-login-anchor)) [data-testid="stSidebarCollapseButton"] {{
+  display: none !important;
+  visibility: hidden !important;
+  width: 0 !important;
+  height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
 }}
 
-.pd-brand-lockup {{
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] > div:first-child,
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {{
+  background: #FFFFFF !important;
+  height: 100% !important;
+  max-height: 100vh !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+}}
+
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{
+  background: #FFFFFF !important;
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  max-height: 100vh !important;
+  box-sizing: border-box !important;
+  padding: 14px 12px !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+}}
+
+/* Only the top-level sidebar column fills height — nested blocks stay compact */
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div {{
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  gap: 0 !important;
+}}
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"]
+  > div > div[data-testid="stVerticalBlock"] {{
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  gap: 0 !important;
+}}
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"]
+  div[data-testid="stVerticalBlock"] div[data-testid="stVerticalBlock"] {{
+  height: auto !important;
+  flex: 0 0 auto !important;
+  min-height: 0 !important;
+  gap: 0 !important;
+}}
+
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stElementContainer"],
+.stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] .element-container {{
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  flex: 0 0 auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+}}
+
+/* Brand Card */
+.pd-side-brand-card {{
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin: 0.15rem 1rem 0.15rem 0;
-  padding-right: 0.9rem;
-  border-right: 1px solid {LINE};
-  white-space: nowrap;
-  min-height: 2.5rem;
+  gap: 10px;
+  padding: 2px 4px 12px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid #EAECF0;
 }}
-.pd-mark {{
-  width: 28px; height: 28px;
+.pd-side-logo-mark {{
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
   background: {BRAND};
   color: #fff;
-  font-size: 0.68rem;
+  font-size: 11px;
   font-weight: 700;
-  display: inline-flex;
+  letter-spacing: 0.02em;
+  display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
   flex-shrink: 0;
+  box-shadow: none;
 }}
-.pd-product {{
+.pd-side-brand-meta {{
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}}
+.pd-side-brand-meta .title-row {{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}}
+.pd-side-brand-meta .brand-title {{
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
   font-weight: 700;
-  font-size: 1.05rem;
-  letter-spacing: -0.01em;
-  color: {INK};
+  font-size: 16px;
+  color: #101828;
+  letter-spacing: -0.02em;
   line-height: 1.2;
 }}
+.pd-side-brand-meta .badge-env {{
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #667085;
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-transform: none;
+  flex-shrink: 0;
+  line-height: 1;
+}}
+.pd-side-brand-meta .badge-env::before {{
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #98A2B3;
+  flex-shrink: 0;
+}}
+.pd-side-brand-meta .badge-env.connected {{
+  color: #475467;
+}}
+.pd-side-brand-meta .badge-env.connected::before {{
+  background: #12B76A;
+}}
+.pd-side-brand-meta .badge-env.demo::before {{
+  background: #98A2B3;
+}}
+.pd-side-brand-meta .brand-sub {{
+  font-size: 11px;
+  font-weight: 500;
+  color: #667085;
+  margin-top: 2px;
+}}
 
-a[data-testid="stPageLink-NavLink"] {{
+/* Nav Label */
+.pd-side-nav-label {{
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: {MUTED};
+  padding: 2px 9px 4px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}}
+
+/* Reserve space so nav never sits under the pinned account dock */
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{
+  padding-bottom: 140px !important;
+}}
+
+/*
+ * Pin profile + actions to the sidebar bottom.
+ * The account block is always the last child of the root sidebar column.
+ * Avoid broad :has(.pd-side-footer-dock) — it also matches the root column.
+ */
+section[data-testid="stSidebar"]
+  [data-testid="stSidebarUserContent"]
+  > div
+  > div[data-testid="stVerticalBlock"]
+  > :last-child {{
+  position: fixed !important;
+  left: 12px !important;
+  bottom: 12px !important;
+  width: calc(264px - 24px) !important;
+  max-width: calc(264px - 24px) !important;
+  margin: 0 !important;
+  padding: 11px 0 0 0 !important;
+  border-top: 1px solid {LINE} !important;
+  background: #FFFFFF !important;
+  z-index: 100 !important;
+  box-sizing: border-box !important;
+  height: auto !important;
+  flex: 0 0 auto !important;
+}}
+.pd-side-footer-dock {{
+  padding: 0;
+  margin: 0 0 7px 0;
+}}
+.pd-side-user-card {{
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 2px 2px 2px;
+  min-width: 0;
+  margin-bottom:20px;
+}}
+.pd-side-user-card .user-info {{
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}}
+.pd-side-user-card .user-name {{
+  font-weight: 600;
+  font-size: 13px;
+  color: {INK};
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}}
+.pd-side-user-card .user-role {{
+  font-size: 11px;
+  color: {MUTED};
+  margin-top: 1px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}}
+
+/* Nav links — tight stack, no stretch gaps */
+section[data-testid="stSidebar"] [data-testid="stPageLink"],
+section[data-testid="stSidebar"] [data-testid="stElementContainer"]:has([data-testid="stPageLink"]) {{
+  margin: 0 0 2px 0 !important;
+  padding: 0 !important;
+  flex: 0 0 auto !important;
+  height: auto !important;
+}}
+
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"] {{
   text-decoration: none !important;
-  color: {INK} !important;
-  font-weight: 550 !important;
-  font-size: 0.9rem !important;
-  padding: 0.55rem 0.5rem 0.6rem !important;
-  border-bottom: 2px solid transparent !important;
-  border-radius: 0 !important;
+  color: #344054 !important;
+  font-weight: 500 !important;
+  font-size: 14px !important;
+  padding: 7px 10px !important;
+  border-radius: 8px !important;
   background: transparent !important;
-}}
-a[data-testid="stPageLink-NavLink"]:hover {{
-  color: {BRAND} !important;
-}}
-a[data-testid="stPageLink-NavLink"][aria-current="page"],
-a[data-testid="stPageLink-NavLink"][aria-selected="true"] {{
-  color: {BRAND} !important;
-  font-weight: 700 !important;
-  border-bottom-color: {BRAND} !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 9px !important;
+  width: 100% !important;
+  min-height: 34px !important;
+  max-height: 38px !important;
+  line-height: 1.2 !important;
+  box-sizing: border-box !important;
+  transition: background 0.12s ease, color 0.12s ease !important;
+  border: none !important;
 }}
 
-.pd-page-head {{ margin: 0.1rem 0 0.85rem 0; }}
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"]
+  [data-testid="stMarkdownContainer"] {{
+  display: flex !important;
+  align-items: center !important;
+}}
+
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"]:hover {{
+  color: #101828 !important;
+  background: #F9FAFB !important;
+}}
+
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"][aria-current="page"],
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"][aria-selected="true"] {{
+  color: #101828 !important;
+  font-weight: 600 !important;
+  background: #F2F4F7 !important;
+}}
+
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"] [data-testid="stIconMaterial"],
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"] span[translate="no"],
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"] svg {{
+  color: inherit !important;
+  font-size: 18px !important;
+  line-height: 1 !important;
+  flex-shrink: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+}}
+
+.pd-side-avatar-img {{
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}}
+.pd-side-avatar-box {{
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #DBEAFE;
+  color: #1E40AF;
+  font-weight: 700;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid #BFDBFE;
+}}
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"]:has(.pd-side-footer-dock)
+  [data-testid="stHorizontalBlock"] {{
+  gap: 6px !important;
+  margin-top: 2px !important;
+  align-items: stretch !important;
+}}
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"]:has(.pd-side-footer-dock)
+  [data-testid="stElementContainer"] {{
+  position: static !important;
+  margin: 0 !important;
+}}
+section[data-testid="stSidebar"] [data-testid="stButton"] button {{
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  min-height: 32px !important;
+  height: 32px !important;
+  border-radius: 7px !important;
+  box-shadow: none !important;
+}}
+
+.pd-page-head {{
+  margin: 0 0 10px 0;
+  padding: 0 0 10px 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid {LINE};
+  border-radius: 0;
+  width: 100%;
+  max-width: none;
+}}
+.pd-page-head .eyebrow {{
+  margin: 0 0 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: {MUTED};
+}}
 .pd-page-head h1 {{
   margin: 0;
-  font-size: 1.2rem;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: {INK};
+  line-height: 1.25;
 }}
 .pd-page-head .desc {{
-  margin-top: 0.2rem;
-  font-size: 0.88rem;
+  margin-top: 4px;
+  font-size: 13px;
   color: {MUTED};
-  max-width: 70ch;
+  max-width: 768px;
+  width: 100%;
   line-height: 1.45;
+}}
+.pd-page-head .pd-page-points {{
+  display: none !important;
+}}
+
+.pd-empty {{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 4px;
+  padding: 24px 16px;
+  margin: 6px 0 12px;
+  background: {SURFACE};
+  border: 1px dashed {LINE};
+  border-radius: 10px;
+}}
+.pd-empty-title {{
+  font-size: 14px;
+  font-weight: 600;
+  color: {INK};
+}}
+.pd-empty-hint {{
+  font-size: 12px;
+  color: {MUTED};
+  max-width: 352px;
+  line-height: 1.4;
 }}
 
 .pd-section {{
   background: {SURFACE};
   border: 1px solid {LINE};
-  border-radius: 6px;
-  padding: 0.85rem 1rem;
-  margin-bottom: 0.75rem;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
 }}
 .pd-section-title {{
-  font-size: 0.7rem;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: {MUTED};
-  margin-bottom: 0.55rem;
-}}
-.pd-section h3 {{
-  margin: 0 0 0.4rem 0;
-  font-size: 1rem;
-  font-weight: 650;
+  margin-bottom: 9px;
 }}
 
 .pd-rail-title {{
-  font-size: 0.7rem;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: {MUTED};
-  margin-bottom: 0.45rem;
-}}
-
-.pd-inbox-item {{
-  border: 1px solid {LINE};
-  border-radius: 6px;
-  background: {SURFACE};
-  padding: 0.55rem 0.65rem;
-  margin-bottom: 0.4rem;
-  font-size: 0.84rem;
-}}
-.pd-inbox-item.active {{
-  border-color: {BRAND};
-  box-shadow: inset 3px 0 0 {BRAND};
-}}
-.pd-inbox-id {{
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.72rem;
-  color: {MUTED};
-}}
-.pd-inbox-subject {{
-  font-weight: 600;
-  color: {INK};
-  margin-top: 0.15rem;
-  line-height: 1.3;
-}}
-.pd-inbox-meta {{
-  margin-top: 0.2rem;
-  font-size: 0.75rem;
-  color: {MUTED};
+  margin-bottom: 7px;
 }}
 
 /* Mail-style work inbox (email-client list) */
-.pd-mail-panel {{
-  background: {SURFACE};
-  border: 1px solid {LINE};
-  border-radius: 14px;
-  padding: 0.75rem 0.7rem 0.55rem;
-  box-shadow: 0 1px 2px rgba(31, 41, 51, 0.04);
-}}
 .pd-mail-head {{
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.55rem;
-  padding: 0 0.15rem;
+  gap: 8px;
+  margin: 6px 0 4px 0;
+  padding: 0 2px;
 }}
 .pd-mail-head .title {{
-  font-size: 0.95rem;
-  font-weight: 650;
+  font-size: 15px;
+  font-weight: 600;
   color: {INK};
   letter-spacing: -0.01em;
 }}
 .pd-mail-head .count {{
-  font-size: 0.72rem;
+  font-size: 12px;
   font-weight: 600;
   color: {MUTED};
   background: #EEF2F6;
   border-radius: 999px;
-  padding: 0.12rem 0.5rem;
+  padding: 2px 8px;
 }}
 .pd-mail-row {{
   display: flex;
   align-items: flex-start;
-  gap: 0.55rem;
-  padding: 0.65rem 0.6rem;
-  margin: 0.28rem 0;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: #FAFBFC;
-  transition: border-color 0.12s ease, background 0.12s ease;
-}}
-.pd-mail-row.on {{
-  background: #fff;
-  border-color: {BRAND};
-  box-shadow: 0 0 0 1px rgba(43, 108, 176, 0.12);
+  gap: 9px;
+  padding: 2px 1px 6px;
+  margin: 0;
+  border: none;
+  background: transparent;
 }}
 .pd-mail-dot {{
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  margin-top: 0.55rem;
+  margin-top: 9px;
   flex-shrink: 0;
   background: transparent;
 }}
 .pd-mail-dot.unread {{ background: {BRAND}; }}
 .pd-mail-avatar {{
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   flex-shrink: 0;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.68rem;
+  font-size: 11px;
   font-weight: 700;
   color: #fff;
-  margin-top: 0.1rem;
+  margin-top: 1px;
+  line-height: 1;
 }}
 .pd-mail-body {{
   flex: 1;
@@ -648,20 +1862,21 @@ a[data-testid="stPageLink-NavLink"][aria-selected="true"] {{
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.35rem 0.4rem;
-  margin-bottom: 0.2rem;
+  gap: 5px 6px;
+  margin-bottom: 3px;
 }}
 .pd-mail-from {{
-  font-size: 0.82rem;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 600;
   color: {INK};
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
 }}
 .pd-mail-tag {{
   display: inline-block;
-  font-size: 0.62rem;
-  font-weight: 650;
+  font-size: 10px;
+  font-weight: 600;
   letter-spacing: 0.02em;
-  padding: 0.12rem 0.42rem;
+  padding: 2px 7px;
   border-radius: 999px;
   line-height: 1.2;
   white-space: nowrap;
@@ -673,7 +1888,7 @@ a[data-testid="stPageLink-NavLink"][aria-selected="true"] {{
 .pd-mail-tag.st-returned {{ background: #EEF2F6; color: #475569; }}
 .pd-mail-tag.branch {{ background: #F1F5F9; color: #334155; }}
 .pd-mail-subline {{
-  font-size: 0.78rem;
+  font-size: 12px;
   line-height: 1.35;
   color: {MUTED};
   overflow: hidden;
@@ -688,24 +1903,24 @@ a[data-testid="stPageLink-NavLink"][aria-selected="true"] {{
 .pd-mail-aside {{
   flex-shrink: 0;
   text-align: right;
-  min-width: 4.2rem;
-  padding-top: 0.15rem;
+  min-width: 67px;
+  padding-top: 2px;
 }}
 .pd-mail-time {{
-  font-size: 0.68rem;
+  font-size: 11px;
   color: {MUTED};
   white-space: nowrap;
 }}
 .pd-mail-sla {{
-  margin-top: 0.25rem;
-  font-size: 0.62rem;
-  font-weight: 650;
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 600;
   color: {BRAND};
   background: #E8F1F8;
   border-radius: 999px;
-  padding: 0.14rem 0.4rem;
+  padding: 2px 6px;
   display: inline-block;
-  max-width: 5.5rem;
+  max-width: 88px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -715,72 +1930,181 @@ a[data-testid="stPageLink-NavLink"][aria-selected="true"] {{
   background: #FEE2E2;
 }}
 .pd-mail-empty {{
-  padding: 1.1rem 0.6rem;
+  padding: 18px 10px;
   text-align: center;
   color: {MUTED};
-  font-size: 0.82rem;
+  font-size: 13px;
 }}
-/* Compact Open control beside each mail row */
-div[data-testid="stVerticalBlock"]:has(.pd-mail-row) div[data-testid="stButton"] > button {{
-  margin-top: 0.85rem !important;
-  min-height: 2.4rem !important;
-  height: 2.4rem !important;
-  padding: 0 0.35rem !important;
-  font-size: 0.72rem !important;
-  font-weight: 650 !important;
-  border-radius: 10px !important;
+.pd-mail-hint {{
+  display: none !important;
+}}
+.pd-tour-sample {{
+  margin: 10px 0 6px 0;
+  padding: 10px 12px;
+  border: 1px solid {LINE};
+  border-radius: 8px;
+  background: {SOFT};
+  font-size: 14px;
+  line-height: 1.4;
+}}
+.pd-tour-sample .tag {{
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: {BRAND};
+  background: #E8F1FB;
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin-right: 6px;
+}}
+.pd-tour-sample .subj {{
+  margin-top: 6px;
+  color: {MUTED};
+  font-size: 13px;
+}}
+.pd-mb-card {{
+  border: 1px solid {LINE};
+  border-radius: 10px;
+  background: {SURFACE};
+  padding: 10px 12px;
+  margin: 6px 0 9px 0;
+}}
+.pd-mb-top {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: baseline;
+}}
+.pd-mb-top strong {{
+  color: {INK};
+  font-size: 14px;
+}}
+.pd-mb-addr {{
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: {MUTED};
+}}
+.pd-mb-status {{
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}}
+.pd-mb-status.ok {{ color: #166534; }}
+.pd-mb-status.warn {{ color: #92400E; }}
+.pd-mb-status.bad {{ color: #991B1B; }}
+.pd-mb-status.muted {{ color: {MUTED}; }}
+.pd-mb-detail {{
+  margin-top: 2px;
+  font-size: 12px;
+  color: {MUTED};
+  line-height: 1.35;
+}}
+/* Dense mail list — hairline rows */
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.pd-mail-card-on) {{
+  border-color: transparent !important;
+  border-left: 3px solid {BRAND} !important;
+  box-shadow: none !important;
+  background: {SOFT} !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.pd-mail-row) {{
+  margin-bottom: 0 !important;
+  border: none !important;
+  border-bottom: 1px solid {LINE} !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  padding: 2px 2px !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.pd-mail-row):hover {{
+  background: {SOFT} !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.pd-mail-row) div[data-testid="stButton"] > button {{
+  min-height: 27px !important;
+  height: 27px !important;
+  padding: 0 7px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  border-radius: 6px !important;
+  margin-top: 2px !important;
+  background: transparent !important;
+  border: 1px solid {LINE} !important;
+  color: {MUTED} !important;
+  box-shadow: none !important;
+}}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.pd-mail-row) div[data-testid="stButton"] > button:hover {{
+  background: {SURFACE} !important;
+  color: {BRAND} !important;
+  border-color: {BRAND} !important;
+}}
+
+/* Quieter dataframes */
+div[data-testid="stDataFrame"] {{
+  border: 1px solid {LINE} !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+}}
+div[data-testid="stDataFrame"] th {{
+  font-size: 12px !important;
+  color: {MUTED} !important;
+  font-weight: 600 !important;
+  background: {SOFT} !important;
+}}
+div[data-testid="stDataFrame"] td {{
+  font-size: 13px !important;
 }}
 
 .pd-playbook-rail {{
-  margin-top: 0.85rem;
+  margin-top: 14px;
   border: 1px solid {LINE};
   border-radius: 6px;
   background: {SURFACE};
-  padding: 0.7rem 0.75rem;
+  padding: 11px 12px;
 }}
 .pd-playbook-rail .hd {{
-  font-size: 0.68rem;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: {MUTED};
-  margin-bottom: 0.45rem;
+  margin-bottom: 7px;
 }}
 .pd-playbook-rail .name {{
-  font-size: 0.95rem;
+  font-size: 15px;
   font-weight: 700;
   color: {BRAND};
-  margin-bottom: 0.2rem;
+  margin-bottom: 3px;
 }}
 .pd-playbook-rail .meta {{
-  font-size: 0.78rem;
+  font-size: 12px;
   color: {MUTED};
-  margin-bottom: 0.55rem;
+  margin-bottom: 9px;
   line-height: 1.35;
 }}
 .pd-playbook-rail .step {{
-  font-size: 0.78rem;
+  font-size: 12px;
   color: {INK};
-  padding: 0.28rem 0;
+  padding: 4px 0;
   border-top: 1px solid {LINE};
   line-height: 1.35;
 }}
 .pd-playbook-rail .step .a {{
-  font-size: 0.66rem;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: {BRAND};
 }}
 .pd-playbook-rail .others {{
-  margin-top: 0.65rem;
-  padding-top: 0.55rem;
+  margin-top: 10px;
+  padding-top: 9px;
   border-top: 1px solid {LINE};
 }}
 .pd-playbook-rail .others .row {{
-  font-size: 0.74rem;
+  font-size: 12px;
   color: {MUTED};
-  padding: 0.18rem 0;
+  padding: 3px 0;
 }}
 .pd-playbook-rail .others .row.on {{
   color: {INK};
@@ -790,18 +2114,18 @@ div[data-testid="stVerticalBlock"]:has(.pd-mail-row) div[data-testid="stButton"]
 .pd-chips {{
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  margin: 0.35rem 0 0.55rem 0;
+  gap: 6px;
+  margin: 6px 0 9px 0;
 }}
 .pd-chip {{
   display: inline-block;
-  font-size: 0.72rem;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
   border: 1px solid {LINE};
   background: {SOFT};
   color: {INK};
-  padding: 0.18rem 0.45rem;
+  padding: 3px 7px;
   border-radius: 4px;
 }}
 .pd-chip.type {{ border-color: {BRAND}; color: {BRAND}; background: #E8F1F8; }}
@@ -811,27 +2135,14 @@ div[data-testid="stVerticalBlock"]:has(.pd-mail-row) div[data-testid="stButton"]
   color: {ALERT_INK};
 }}
 
-.pd-alert {{
-  border: 1px solid {ALERT_BORDER};
-  border-left: 4px solid {ALERT_BORDER};
-  background: {ALERT_BG};
-  color: {ALERT_INK};
-  padding: 0.85rem 1rem;
-  font-size: 0.92rem;
-  line-height: 1.45;
-  border-radius: 6px;
-  margin-bottom: 0.85rem;
-}}
-.pd-alert strong {{ color: {ALERT_INK}; }}
-
 .pd-type {{
-  font-size: 1.15rem;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.01em;
-  margin: 0 0 0.15rem 0;
+  margin: 0 0 2px 0;
 }}
 .pd-body {{
-  font-size: 0.9rem;
+  font-size: 14px;
   line-height: 1.5;
   color: {INK};
 }}
@@ -839,9 +2150,9 @@ div[data-testid="stVerticalBlock"]:has(.pd-mail-row) div[data-testid="stButton"]
 .pd-dl {{
   display: grid;
   grid-template-columns: 100px 1fr;
-  gap: 0.25rem 0.55rem;
-  font-size: 0.86rem;
-  margin-top: 0.35rem;
+  gap: 4px 9px;
+  font-size: 14px;
+  margin-top: 6px;
 }}
 .pd-dl .k {{ color: {MUTED}; }}
 .pd-dl .v {{ color: {INK}; font-weight: 500; }}
@@ -849,18 +2160,18 @@ div[data-testid="stVerticalBlock"]:has(.pd-mail-row) div[data-testid="stButton"]
 .pd-branch {{
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.4rem;
+  gap: 6px;
 }}
 .pd-node {{
   border: 1px solid {LINE};
   border-radius: 6px;
-  padding: 0.5rem 0.55rem;
+  padding: 8px 9px;
   background: {BG};
-  font-size: 0.8rem;
+  font-size: 13px;
   color: {MUTED};
 }}
-.pd-node .nm {{ font-weight: 600; color: {INK}; font-size: 0.84rem; }}
-.pd-node .q {{ font-size: 0.72rem; margin-top: 0.1rem; }}
+.pd-node .nm {{ font-weight: 600; color: {INK}; font-size: 13px; }}
+.pd-node .q {{ font-size: 12px; margin-top: 2px; }}
 .pd-node.on {{
   border-color: {BRAND};
   background: #E8F1F8;
@@ -869,61 +2180,33 @@ div[data-testid="stVerticalBlock"]:has(.pd-mail-row) div[data-testid="stButton"]
 }}
 .pd-node.on .nm {{ color: {BRAND}; font-weight: 700; }}
 
-.pd-step {{
-  display: grid;
-  grid-template-columns: 1.7rem 1fr;
-  gap: 0.5rem;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid {LINE};
-}}
-.pd-step:last-child {{ border-bottom: none; }}
-.pd-step .n {{
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.72rem;
-  color: {MUTED};
-  padding-top: 0.12rem;
-}}
-.pd-step .a {{
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: {BRAND};
-}}
-.pd-step .d {{
-  font-size: 0.88rem;
-  color: {INK};
-  line-height: 1.4;
-  margin-top: 0.08rem;
-}}
-
 .pd-callout-row {{
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.65rem;
+  gap: 10px;
 }}
 .pd-callout {{
   border: 1px solid {LINE};
   border-radius: 6px;
-  padding: 0.7rem 0.8rem;
+  padding: 11px 13px;
   background: {BG};
 }}
 .pd-callout .lbl {{
-  font-size: 0.68rem;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: {MUTED};
 }}
 .pd-callout .val {{
-  margin-top: 0.25rem;
-  font-size: 0.95rem;
-  font-weight: 650;
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 600;
   color: {INK};
 }}
 .pd-callout .sub {{
-  margin-top: 0.2rem;
-  font-size: 0.82rem;
+  margin-top: 3px;
+  font-size: 13px;
   color: {MUTED};
   line-height: 1.4;
 }}
@@ -931,154 +2214,136 @@ div[data-testid="stVerticalBlock"]:has(.pd-mail-row) div[data-testid="stButton"]
 .pd-checklist {{
   display: flex;
   flex-wrap: wrap;
-  gap: 0.55rem 1rem;
-  font-size: 0.84rem;
+  gap: 9px 16px;
+  font-size: 13px;
   color: {INK};
-  margin-top: 0.15rem;
+  margin-top: 2px;
 }}
-.pd-checklist .ok {{ color: #1F6B3A; font-weight: 650; }}
+.pd-checklist .ok {{ color: #1F6B3A; font-weight: 600; }}
 .pd-checklist .miss {{ color: {MUTED}; }}
 
-.pd-gate {{
-  border: 1px solid {ALERT_BORDER};
-  border-left: 4px solid {ALERT_BORDER};
-  background: {ALERT_BG};
-  color: {ALERT_INK};
-  padding: 0.85rem 1rem;
-  border-radius: 6px;
-  margin-bottom: 0.85rem;
-}}
-.pd-gate .note {{
-  font-size: 0.82rem;
-  margin-top: 0.35rem;
-  opacity: 0.95;
-}}
 .pd-decision {{
   border: 1px solid {LINE};
   background: #E8F1F8;
   color: {INK};
-  padding: 0.65rem 0.85rem;
+  padding: 10px 14px;
   border-radius: 6px;
-  margin-bottom: 0.75rem;
-  font-size: 0.88rem;
+  margin-bottom: 12px;
+  font-size: 14px;
 }}
 
 .pd-compare-col {{
   border: 1px solid {LINE};
   border-radius: 6px;
   background: {SURFACE};
-  padding: 0.75rem 0.85rem;
+  padding: 12px 14px;
 }}
 .pd-compare-col .hd {{
-  font-size: 0.7rem;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: {MUTED};
-  margin-bottom: 0.35rem;
+  margin-bottom: 6px;
 }}
 .pd-compare-col .title {{
   font-weight: 700;
-  font-size: 0.95rem;
+  font-size: 15px;
   color: {BRAND};
-  margin-bottom: 0.45rem;
+  margin-bottom: 7px;
 }}
 .pd-compare-step {{
-  font-size: 0.8rem;
-  padding: 0.28rem 0;
+  font-size: 13px;
+  padding: 4px 0;
   border-bottom: 1px solid {LINE};
   color: {INK};
 }}
 .pd-compare-step .a {{
   font-weight: 700;
-  font-size: 0.68rem;
+  font-size: 11px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: {BRAND};
 }}
 
 .pd-quiet {{
-  font-size: 0.78rem;
+  font-size: 12px;
   color: {MUTED};
-  margin-top: 0.35rem;
+  margin-top: 6px;
 }}
 
 .pd-outputs {{
   display: grid;
-  gap: 0.15rem;
+  gap: 2px;
 }}
 .pd-out-row {{
   display: grid;
   grid-template-columns: 150px 1fr;
-  gap: 0.5rem;
-  padding: 0.4rem 0;
+  gap: 8px;
+  padding: 6px 0;
   border-bottom: 1px solid {LINE};
-  font-size: 0.86rem;
+  font-size: 14px;
 }}
 .pd-out-row:last-child {{ border-bottom: none; }}
 .pd-out-row .k {{
   color: {MUTED};
-  font-size: 0.7rem;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  padding-top: 0.12rem;
+  padding-top: 2px;
 }}
 .pd-out-row .v {{ color: {INK}; line-height: 1.4; word-break: break-word; }}
-.pd-out-row .v.flag {{ font-weight: 650; color: {BRAND}; }}
-.pd-out-row .v.warn {{ font-weight: 650; color: {ALERT_INK}; }}
-.pd-out-row .v.ok {{ font-weight: 650; color: #1F6B3A; }}
+.pd-out-row .v.flag {{ font-weight: 600; color: {BRAND}; }}
+.pd-out-row .v.warn {{ font-weight: 600; color: {ALERT_INK}; }}
+.pd-out-row .v.ok {{ font-weight: 600; color: #1F6B3A; }}
 
 /* Top toaster stack — notifications / alerts / flags */
 .pd-toast-stack {{
   position: sticky;
-  top: 0.35rem;
+  top: 6px;
   z-index: 40;
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
-  margin: 0 0 0.9rem 0;
+  gap: 7px;
+  margin: 0 0 14px 0;
 }}
 .pd-toast {{
   display: grid;
-  grid-template-columns: 4.6rem 1fr;
-  gap: 0.65rem;
+  grid-template-columns: 74px 1fr;
+  gap: 10px;
   align-items: start;
   background: {SURFACE};
   border: 1px solid {LINE};
   border-radius: 8px;
-  padding: 0.65rem 0.8rem;
+  padding: 10px 13px;
   box-shadow: 0 6px 18px rgba(31, 41, 51, 0.08);
   animation: pdToastIn 0.32s ease-out;
 }}
 .pd-toast .kind {{
-  font-size: 0.65rem;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  padding: 0.2rem 0.35rem;
+  padding: 3px 6px;
   border-radius: 4px;
   text-align: center;
   line-height: 1.2;
 }}
 .pd-toast .body {{
-  font-size: 0.86rem;
+  font-size: 14px;
   line-height: 1.4;
   color: {INK};
 }}
 .pd-toast .body strong {{
   display: block;
-  font-size: 0.8rem;
-  margin-bottom: 0.12rem;
+  font-size: 13px;
+  margin-bottom: 2px;
 }}
-.pd-toast.notify {{ border-left: 4px solid {BRAND}; }}
-.pd-toast.notify .kind {{ background: #E8F1F8; color: {BRAND}; }}
 .pd-toast.alert {{ border-left: 4px solid {ALERT_BORDER}; }}
 .pd-toast.alert .kind {{ background: {ALERT_BG}; color: {ALERT_INK}; }}
 .pd-toast.flag {{ border-left: 4px solid #0F766E; }}
 .pd-toast.flag .kind {{ background: #CCFBF1; color: #0F766E; }}
-.pd-toast.ok {{ border-left: 4px solid #1F6B3A; }}
-.pd-toast.ok .kind {{ background: #E8F5EC; color: #1F6B3A; }}
 @keyframes pdToastIn {{
   from {{ opacity: 0; transform: translateY(-8px); }}
   to {{ opacity: 1; transform: translateY(0); }}
@@ -1092,7 +2357,7 @@ div.stButton > button[kind="primary"] {{
 div.stButton > button {{
   border-radius: 6px;
   border-color: {LINE};
-  font-weight: 550;
+  font-weight: 600;
 }}
 
 /* Branch compare dialog — steel-blue popup (PulseDesk palette) */
@@ -1115,6 +2380,24 @@ div[data-testid="stDialog"] [data-testid="stMarkdownContainer"] h2 {{
   .pd-branch {{ grid-template-columns: 1fr 1fr; }}
   .pd-callout-row {{ grid-template-columns: 1fr; }}
   .pd-out-row {{ grid-template-columns: 1fr; }}
+  .block-container {{
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }}
+}}
+@media (max-width: 640px) {{
+  .pd-branch {{ grid-template-columns: 1fr; }}
+  .pd-page-head h1 {{ font-size: 19px; }}
+  .pd-mail-row {{ grid-template-columns: 1fr; }}
+  section.main {{ overflow-x: hidden !important; }}
+  .stApp {{ overflow-x: hidden !important; }}
+}}
+@media (max-width: 320px) {{
+  .block-container {{
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }}
+  .pd-page-head h1 {{ font-size: 18px; }}
 }}
 </style>
         """,
@@ -1129,70 +2412,213 @@ def page_setup(_title: str = "PulseDesk", icon: str = "▣") -> None:
     db.init_db()
 
 
-NAV_LINKS: list[tuple[str, str]] = [
-    ("pages/0_Process.py", "Process"),
-    ("pages/1_Case_Log.py", "Case Log"),
-    ("pages/2_Playbooks.py", "Playbooks"),
+NAV_LINKS: list[tuple[str, str, str, str]] = [
+    # path, label, active_key, material icon
+    ("pages/0_Process.py", "Process", "process", ":material/inbox:"),
+    ("pages/1_Case_Log.py", "Case Log", "case_log", ":material/receipt_long:"),
+    ("pages/2_Playbooks.py", "Playbooks", "playbooks", ":material/account_tree:"),
 ]
+
+# url_pathname fragment used in page_link href (Streamlit strips "N_" page prefixes)
+_NAV_HREF_BY_ACTIVE: dict[str, str] = {
+    "process": "Process",
+    "case_log": "Case_Log",
+    "playbooks": "Playbooks",
+}
+
+
+def _inject_sidebar_visibility() -> None:
+    """Force the workbench sidebar open after login (overrides login-hide CSS)."""
+    st.markdown(
+        f"""
+<style>
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"][aria-expanded="false"] {{
+  display: flex !important;
+  visibility: visible !important;
+  min-width: 264px !important;
+  width: 264px !important;
+  max-width: 264px !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  overflow: hidden !important;
+  background: {SURFACE} !important;
+  border-right: 1px solid {LINE} !important;
+  transform: none !important;
+  margin: 0 !important;
+  margin-left: 0 !important;
+  left: 0 !important;
+  top: 0 !important;
+  position: relative !important;
+}}
+section[data-testid="stSidebar"] *,
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{
+  scrollbar-width: none !important;
+}}
+section[data-testid="stSidebar"]::-webkit-scrollbar,
+section[data-testid="stSidebar"] *::-webkit-scrollbar {{
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}}
+div[data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarCollapseButton"],
+section[data-testid="stSidebar"] button[kind="header"],
+section[data-testid="stSidebar"] [data-testid="stSidebarHeader"],
+section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"],
+section[data-testid="stSidebar"] [data-testid="collapsedControl"] {{
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  width: 0 !important;
+}}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def chrome(active: str = "process") -> bool:
-    """Top nav for signed-in users. Returns False if login form is showing."""
-    del active
+    """Single-column side nav. Returns False while login is showing."""
     user = current_user()
     if not user:
         require_login()
         return False
 
-    role_title = ROLE_PROFILES.get(user.get("role") or "", {}).get("title") or (
-        user.get("role") or "User"
-    ).title()
+    prepare_tour_workspace()
+    _inject_sidebar_visibility()
 
-    brand, n1, n2, n3, tour_col, profile_col = st.columns(
-        [1.4, 0.75, 0.9, 0.95, 0.8, 0.55]
+    role = str(user.get("role") or "agent")
+    role_title = ROLE_PROFILES.get(role, {}).get("title") or role.title()
+    email = str(
+        user.get("email")
+        or (USERS.get(str(user.get("username") or "")) or {}).get("email")
+        or f"{user.get('username') or 'user'}@pulsedesk.demo"
     )
-    with brand:
+    active_href = _NAV_HREF_BY_ACTIVE.get(active, "Process")
+    brand_sub = (
+        "Lead escalation desk" if role == "lead" else "Agent workbench"
+    )
+    env_kind = "demo"
+    env_label = "Demo"
+    try:
+        from integrations.gmail_inbox import list_mailboxes
+
+        n_mail = len(list_mailboxes())
+        if n_mail:
+            env_kind = "connected"
+            env_label = f"Connected · {n_mail}"
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Outside sidebar so the <style> block does not create an extra nav node
+    st.markdown(
+        f"""
+<style>
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"][href*="{active_href}"] {{
+  color: #101828 !important;
+  font-weight: 600 !important;
+  background: #F2F4F7 !important;
+}}
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"][href*="{active_href}"]:hover {{
+  background: #EAECF0 !important;
+  color: #101828 !important;
+}}
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"][href*="{active_href}"]
+  [data-testid="stMarkdownContainer"],
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"][href*="{active_href}"]
+  [data-testid="stMarkdownContainer"] * {{
+  color: #101828 !important;
+  font-weight: 600 !important;
+}}
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"][href*="{active_href}"]
+  [data-testid="stIconMaterial"],
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"][href*="{active_href}"]
+  span[translate="no"],
+section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"][href*="{active_href}"] svg {{
+  color: #344054 !important;
+}}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.sidebar:
+        initials = _esc_html(str(user.get("initials") or "PD"))
+        avatar_html = f'<div class="pd-side-avatar-box">{initials}</div>'
+
         st.markdown(
-            """
-<div class="pd-brand-lockup">
-  <span class="pd-mark">PD</span>
-  <span class="pd-product">PulseDesk</span>
+            f"""
+<div class="pd-side-brand-card">
+  <div class="pd-side-logo-mark" aria-hidden="true">PD</div>
+  <div class="pd-side-brand-meta">
+    <div class="title-row">
+      <span class="brand-title">PulseDesk</span>
+      <span class="badge-env {env_kind}">{_esc_html(env_label)}</span>
+    </div>
+    <div class="brand-sub">{_esc_html(brand_sub)}</div>
+  </div>
 </div>
+<div class="pd-side-nav-label">WORKBENCH</div>
             """,
             unsafe_allow_html=True,
         )
-    for col, (path_name, label) in zip((n1, n2, n3), NAV_LINKS):
-        with col:
-            st.page_link(path_name, label=label)
-    with tour_col:
-        if st.button("Take tour", width="stretch", key="take_tour"):
-            start_guided_tour()
-            st.rerun()
-    with profile_col:
-        with st.popover(
-            user.get("initials") or "?",
-            help="Account — name, role, sign out",
-        ):
+
+        for path_name, label, _key, icon in NAV_LINKS:
+            st.page_link(path_name, label=label, icon=icon)
+
+        with st.container():
             st.markdown(
                 f"""
-<div class="pd-profile-menu">
-  <p class="name">{_esc_html(user.get("name") or "")}</p>
-  <p class="role">{_esc_html(role_title)}</p>
+<div class="pd-side-footer-dock">
+  <div class="pd-side-user-card">
+    {avatar_html}
+    <div class="user-info">
+      <div class="user-name">{_esc_html(user.get("name") or "")}</div>
+      <div class="user-role">{_esc_html(role_title)} · {_esc_html(email)}</div>
+    </div>
+  </div>
 </div>
                 """,
                 unsafe_allow_html=True,
             )
-            if st.button("Sign out", type="primary", width="stretch", key="sign_out"):
-                logout()
-    st.markdown('<div class="pd-nav-row"></div>', unsafe_allow_html=True)
+            tour_col, out_col = st.columns(2, gap="small")
+            with tour_col:
+                if st.button("Take tour", width="stretch", key="take_tour"):
+                    start_guided_tour(switch_to_process=True)
+            with out_col:
+                if st.button("Sign out", type="primary", width="stretch", key="sign_out"):
+                    logout()
+
     render_guided_tour_if_needed()
     return True
 
 
-def page_header(title: str, desc: str = "") -> None:
-    desc_html = f'<div class="desc">{desc}</div>' if desc else ""
+
+def page_header(
+    title: str,
+    desc: str = "",
+    *,
+    eyebrow: str = "",
+    points: list[str] | None = None,
+) -> None:
+    """Page title block with short overview and optional bullet points."""
+    eye = (
+        f'<p class="eyebrow">{_esc_html(eyebrow)}</p>'
+        if eyebrow
+        else '<p class="eyebrow">PulseDesk</p>'
+    )
+    desc_html = f'<div class="desc">{_esc_html(desc)}</div>' if desc else ""
+    points_html = ""
+    if points:
+        items = "".join(f"<li>{_esc_html(p)}</li>" for p in points if p)
+        if items:
+            points_html = f'<ul class="pd-page-points">{items}</ul>'
     st.markdown(
-        f'<div class="pd-page-head"><h1>{title}</h1>{desc_html}</div>',
+        f'<div class="pd-page-head">{eye}<h1>{_esc_html(title)}</h1>'
+        f"{desc_html}{points_html}</div>",
         unsafe_allow_html=True,
     )
 
@@ -1257,7 +2683,7 @@ def render_playbook_rail(
   <div class="meta">Queue <strong>{_esc_html(queue)}</strong><br/>Strategy: {_esc_html(summary)}</div>
   {"".join(steps_html)}
   <div class="others">
-    <div class="hd" style="margin-bottom:0.25rem;">All six paths</div>
+    <div class="hd" style="margin-bottom:4px;">All six paths</div>
     {"".join(others)}
   </div>
 </div>
@@ -1268,6 +2694,14 @@ def render_playbook_rail(
 
 def branch_label(key: str) -> str:
     return BRANCH_LABELS.get(key, key)
+
+
+def branch_short(key: str) -> str:
+    """Compact queue label for inbox tags (avoids wrapping)."""
+    pb = PLAYBOOK_BY_KEY.get(key)
+    if pb:
+        return pb[2]
+    return branch_label(key)
 
 
 def _follow_up_detail(steps: list[dict[str, Any]]) -> str:
@@ -1605,6 +3039,9 @@ def apply_lead_decision(
         payload["note"] = note
     if decision == "returned_to_agent":
         payload["lead_note_to_agent"] = note
+    if decision == "approved_release" and draft:
+        payload["draft_chars"] = len(draft)
+        payload["draft_edited"] = True
     order = db.next_action_order(case_id)
     db.log_action(case_id, order, action_type, detail, payload)
 
@@ -1615,6 +3052,11 @@ def apply_lead_decision(
         db.set_case_status(case_id, db.STATUS_RELEASED, updated_by=actor)
         result["needs_review"] = False
         result["status"] = db.STATUS_RELEASED
+        if draft:
+            rem = dict(result.get("remediation") or {})
+            rem["email_draft"] = draft
+            result["remediation"] = rem
+            result["draft_saved_text"] = draft
     elif decision == "returned_to_agent":
         db.set_needs_review(case_id, True)
         db.set_case_status(
@@ -1699,9 +3141,15 @@ _AVATAR_COLORS = (
 
 
 def _mail_initials(name: str) -> str:
-    parts = [p for p in name.replace("_", " ").replace(".", " ").split() if p]
-    if not parts:
+    raw = (name or "").strip()
+    if not raw:
         return "?"
+    # Account IDs → fixed "AC" so avatars stay consistent
+    if raw.upper().startswith("ACC"):
+        return "AC"
+    parts = [p for p in raw.replace("_", " ").replace(".", " ").replace("-", " ").split() if p]
+    if not parts:
+        return raw[:2].upper()
     if len(parts) == 1:
         token = parts[0]
         return token[:2].upper()
@@ -1754,9 +3202,10 @@ def mail_case_row_html(case: dict[str, Any], *, active: bool = False) -> str:
     from_label = _case_from_label(case)
     subject = (case.get("subject") or "Untitled request").strip()
     preview = _case_body_preview(case)
-    branch = branch_label(str(case.get("request_type") or ""))
+    branch = branch_short(str(case.get("request_type") or ""))
     when = _mail_when(case.get("received_at") or case.get("created_at"))
     sla = db.sla_remaining(case.get("sla_due_at"))
+    mailbox = (case.get("source_mailbox") or "").strip()
     unread = status in (db.STATUS_OPEN, db.STATUS_RETURNED) and not (
         case.get("assigned_to") or ""
     ).strip()
@@ -1764,31 +3213,39 @@ def mail_case_row_html(case: dict[str, Any], *, active: bool = False) -> str:
     sla_block = (
         f'<div class="{sla_cls}">{_esc_html(sla)}</div>' if sla and sla != "—" else ""
     )
-    on = " on" if active else ""
+    mailbox_tag = (
+        f'<span class="pd-mail-tag branch">{_esc_html(mailbox)}</span>' if mailbox else ""
+    )
+    marker = '<div class="pd-mail-card-on"></div>' if active else ""
+    open_pill = (
+        '<span class="pd-mail-open-pill">Open</span>' if active else ""
+    )
     unread_cls = " unread" if unread else ""
     avatar = _mail_initials(from_label)
     color = _mail_avatar_color(from_label)
-    return f"""
-<div class="pd-mail-row{on}">
-  <span class="pd-mail-dot{unread_cls}"></span>
-  <span class="pd-mail-avatar" style="background:{color}">{_esc_html(avatar)}</span>
-  <div class="pd-mail-body">
-    <div class="pd-mail-top">
-      <span class="pd-mail-from">{_esc_html(from_label)}</span>
-      <span class="pd-mail-tag st-{_esc_html(status)}">{_esc_html(status_label)}</span>
-      <span class="pd-mail-tag branch">{_esc_html(branch)}</span>
-    </div>
-    <div class="pd-mail-subline">
-      <strong>{_esc_html(subject)}</strong>
-      — {_esc_html(preview)}
-    </div>
-  </div>
-  <div class="pd-mail-aside">
-    <div class="pd-mail-time">{_esc_html(when)}</div>
-    {sla_block}
-  </div>
-</div>
-""".strip()
+    # Single continuous HTML string — blank lines make Streamlit print raw tags
+    return (
+        f"{marker}"
+        f'<div class="pd-mail-row">'
+        f'<span class="pd-mail-dot{unread_cls}"></span>'
+        f'<span class="pd-mail-avatar" style="background:{color}">{_esc_html(avatar)}</span>'
+        f'<div class="pd-mail-body">'
+        f'<div class="pd-mail-top">'
+        f'<span class="pd-mail-from">{_esc_html(from_label)}</span>'
+        f"{open_pill}"
+        f'<span class="pd-mail-tag st-{_esc_html(status)}">{_esc_html(status_label)}</span>'
+        f'<span class="pd-mail-tag branch">{_esc_html(branch)}</span>'
+        f"{mailbox_tag}"
+        f"</div>"
+        f'<div class="pd-mail-subline">'
+        f"<strong>{_esc_html(subject)}</strong>"
+        f" — {_esc_html(preview)}"
+        f"</div></div>"
+        f'<div class="pd-mail-aside">'
+        f'<div class="pd-mail-time">{_esc_html(when)}</div>'
+        f"{sla_block}"
+        f"</div></div>"
+    )
 
 
 def render_mail_case_list(
@@ -1797,45 +3254,92 @@ def render_mail_case_list(
     selected_id: str | None,
     key_prefix: str,
     title: str = "Inbox",
-) -> str | None:
-    """Mail-style inbox list. Returns a case_id when the agent opens a row."""
-    st.markdown(
-        f"""
-<div class="pd-mail-head">
-  <span class="title">{_esc_html(title)}</span>
-  <span class="count">{len(cases)}</span>
-</div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "**Open** loads the case into the workbench on the right. "
-        "**Claim** (below) assigns it to you — different action."
-    )
-    if not cases:
-        st.markdown(
-            '<div class="pd-mail-empty">No cases in this view.</div>',
-            unsafe_allow_html=True,
-        )
-        return None
+    allow_claim: bool = False,
+    claim_username: str = "",
+    assignment_view: str = "All",
+) -> dict[str, str | None]:
+    """Mail-style inbox. Returns {{open, claim, unassign}} case ids when clicked.
 
-    clicked: str | None = None
+    Claim = take ownership (moves case into Mine). On Mine, only Unassign is offered.
+    """
+    _render_html(
+        f'<div class="pd-mail-head">'
+        f'<span class="title">{_esc_html(title)}</span>'
+        f'<span class="count">{len(cases)}</span></div>'
+    )
+    result: dict[str, str | None] = {"open": None, "claim": None, "unassign": None}
+    if not cases:
+        _render_html(
+            '<div class="pd-empty">'
+            '<div class="pd-empty-title">No cases in this view</div>'
+            '<div class="pd-empty-hint">Try another filter, sync Gmail, or compose a new request.</div>'
+            "</div>"
+        )
+        return result
+
+    me = (claim_username or "").strip()
     for case in cases:
         cid = str(case.get("case_id") or "")
         active = bool(selected_id and cid == selected_id)
-        row, go = st.columns([0.82, 0.18], gap="small")
-        with row:
-            st.markdown(mail_case_row_html(case, active=active), unsafe_allow_html=True)
-        with go:
+        # Prefer live DB assignee so Claim flips to Unassign right after claim
+        live = db.get_case(cid) if (active or allow_claim) and cid else None
+        assignee = str(
+            (live or case).get("assigned_to") or case.get("assigned_to") or ""
+        ).strip()
+        is_mine = bool(me and assignee == me) or view == "Mine"
+        with st.container(border=True):
+            _render_html(mail_case_row_html(case, active=active))
+            # Always offer Open/Reload so Mine cards are never dead-ends
+            open_label = "Reload workbench" if active else "Open"
             if st.button(
-                "Open",
-                key=f"{key_prefix}_{cid}",
+                open_label,
+                key=f"{key_prefix}_open_{cid}",
                 width="stretch",
-                type="primary" if active else "secondary",
-                help="Load this case into the workbench (subject, body, playbook result).",
+                type="primary" if not active else "secondary",
+                help="Load this case into the right-hand workbench.",
             ):
-                clicked = cid
-    return clicked
+                result["open"] = cid
+
+            if allow_claim:
+                if is_mine:
+                    if active:
+                        st.caption("Assigned to you · open in workbench")
+                    if st.button(
+                        "Unassign",
+                        key=f"{key_prefix}_unassign_{cid}",
+                        width="stretch",
+                        help="Return this case to Unassigned.",
+                    ):
+                        result["unassign"] = cid
+                elif not assignee:
+                    if st.button(
+                        "Claim",
+                        key=f"{key_prefix}_claim_{cid}",
+                        width="stretch",
+                        help="Assign this case to you (appears under Mine).",
+                    ):
+                        result["claim"] = cid
+                else:
+                    st.caption(f"Assigned to `{assignee}`")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button(
+                            "Claim for me",
+                            key=f"{key_prefix}_claim_{cid}",
+                            width="stretch",
+                            help="Take ownership from the current assignee.",
+                        ):
+                            result["claim"] = cid
+                    with c2:
+                        if st.button(
+                            "Unassign",
+                            key=f"{key_prefix}_unassign_{cid}",
+                            width="stretch",
+                        ):
+                            result["unassign"] = cid
+            elif active:
+                st.caption("Open in workbench")
+    return result
 
 
 def filter_cases_by_query(
@@ -1856,6 +3360,7 @@ def filter_cases_by_query(
                 "request_type",
                 "status",
                 "assigned_to",
+                "source_mailbox",
             )
         ).lower()
         if q in blob:
@@ -1891,12 +3396,31 @@ def open_case_in_workspace(case_id: str) -> bool:
         return False
     case = db.get_case(case_id) or {}
     rebuilt["replay"] = False
-    st.session_state.workspace_subject = case.get("subject") or ""
-    st.session_state.workspace_body = case.get("body") or ""
-    st.session_state.workspace_source_id = case_id
-    st.session_state.selected_inbox_id = case_id
-    st.session_state.last_result = rebuilt
+    # Set keyed widget values before Process inputs render (caller should st.rerun())
+    st.session_state["workspace_subject"] = str(case.get("subject") or "")
+    st.session_state["workspace_body"] = str(case.get("body") or "")
+    st.session_state["workspace_source_id"] = case_id
+    st.session_state["selected_inbox_id"] = case_id
+    st.session_state["last_result"] = rebuilt
     return True
+
+
+def workspace_needs_case_reload(case_id: str | None) -> bool:
+    """True when the workbench should (re)hydrate this case from SQLite."""
+    cid = str(case_id or "").strip()
+    if not cid:
+        return False
+    if str(st.session_state.get("workspace_source_id") or "") != cid:
+        return True
+    result = st.session_state.get("last_result")
+    if not isinstance(result, dict) or str(result.get("case_id") or "") != cid:
+        return True
+    subj = str(st.session_state.get("workspace_subject") or "").strip()
+    body = str(st.session_state.get("workspace_body") or "").strip()
+    if subj or body:
+        return False
+    case = db.get_case(cid) or {}
+    return bool(str(case.get("subject") or "").strip() or str(case.get("body") or "").strip())
 
 
 def render_timeline_compact(result: dict[str, Any], heading: str) -> None:
@@ -2009,7 +3533,16 @@ def open_branch_compare_dialog() -> None:
 
 
 def _esc_html(value: object) -> str:
-    return html.escape(str(value if value not in (None, "") else "—"), quote=False)
+    return html.escape(str(value if value not in (None, "") else "—"), quote=True)
+
+
+def _render_html(fragment: str) -> None:
+    """Render HTML safely — Streamlit Markdown breaks multi-line HTML on blank lines."""
+    compact = " ".join(line.strip() for line in fragment.splitlines() if line.strip())
+    if hasattr(st, "html"):
+        st.html(compact)
+    else:
+        st.markdown(compact, unsafe_allow_html=True)
 
 
 def _toast_decision(kind: str, case_id: str) -> None:
@@ -2293,10 +3826,10 @@ def render_result_spine(result: dict[str, Any]) -> None:
     <span class="pd-chip">Sentiment {clf.get('sentiment', '—')}</span>
     {review_chip}
   </div>
-  <div style="font-size:0.8rem;color:{MUTED};">
+  <div style="font-size:13px;color:{MUTED};">
     Case <span class="pd-mono">{case_id}</span>
   </div>
-  <div class="pd-body" style="margin-top:0.55rem;"><strong>Why this branch:</strong> {_esc_html(why_line.replace('**',''))}</div>
+  <div class="pd-body" style="margin-top:9px;"><strong>Why this branch:</strong> {_esc_html(why_line.replace('**',''))}</div>
   <div class="pd-quiet"><strong>What I'm unsure about:</strong> {_esc_html(unsure_line)}</div>
   {force_note}
 </div>
@@ -2318,7 +3851,7 @@ def render_result_spine(result: dict[str, Any]) -> None:
                 f'<div class="k">{title}</div><div class="v">{entities[k]}</div>'
             )
     entities_html = (
-        f'<div class="pd-section-title" style="margin-top:0.75rem;">Entities</div>'
+        f'<div class="pd-section-title" style="margin-top:12px;">Entities</div>'
         f'<div class="pd-dl">{"".join(entity_rows)}</div>'
         if entity_rows
         else ""
@@ -2384,22 +3917,32 @@ def render_result_spine(result: dict[str, Any]) -> None:
         st.session_state[edit_key] = False
 
     editing = bool(st.session_state.get(edit_key)) and not decision
-    # Agent edit gate only in agent role; lead always reads draft locked
-    if is_lead:
+    # Lead may edit draft on open escalations; agents unlock via Edit
+    if is_lead and open_escalation:
+        draft_locked = False
+        lead_editing = True
+    elif is_lead:
         draft_locked = True
+        lead_editing = False
     elif is_agent and not is_replay and needs_review and not decision:
         draft_locked = not editing
+        lead_editing = False
     elif decision == "escalated_lead":
         draft_locked = True
+        lead_editing = False
     else:
         draft_locked = bool(decision)
+        lead_editing = False
 
     st.markdown(
         '<div class="pd-section"><div class="pd-section-title">5 · Draft customer response</div></div>',
         unsafe_allow_html=True,
     )
     if is_lead and open_escalation:
-        st.caption("Draft locked for lead review — Approve release uses this draft (simulated until email wired).")
+        st.caption(
+            "Edit the draft if needed, then **Approve release** (simulated until email wired) "
+            "or **Return to agent** with a reason."
+        )
     elif is_agent and not is_replay and needs_review and not decision:
         if editing:
             st.caption("Editing unlocked — **Save** if needed, then **Release** or **Escalate** (reason required).")
@@ -2410,14 +3953,15 @@ def render_result_spine(result: dict[str, Any]) -> None:
             )
 
     # Remount widget when unlocking — same key stays disabled in Streamlit
-    widget_key = edit_buf_key if editing else view_key
-    if editing and edit_buf_key not in st.session_state:
+    use_edit_buf = editing or lead_editing
+    widget_key = edit_buf_key if use_edit_buf else view_key
+    if use_edit_buf and edit_buf_key not in st.session_state:
         st.session_state[edit_buf_key] = (
             st.session_state.get(view_key)
             or result.get("draft_saved_text")
             or draft
         )
-    if not editing and view_key not in st.session_state:
+    if not use_edit_buf and view_key not in st.session_state:
         st.session_state[view_key] = (
             result.get("draft_saved_text") or rem.get("email_draft") or draft
         )
@@ -2585,10 +4129,13 @@ def render_result_spine(result: dict[str, Any]) -> None:
                 )
                 st.rerun()
         if note_btn:
-            st.session_state.last_result = apply_lead_decision(
-                result, "note", note=note_txt or ""
-            )
-            st.rerun()
+            if not (note_txt or "").strip():
+                st.error("Add a short note before saving.")
+            else:
+                st.session_state.last_result = apply_lead_decision(
+                    result, "note", note=note_txt.strip()
+                )
+                st.rerun()
 
     elif not needs_review and not is_replay and not decision and is_agent:
         st.caption(

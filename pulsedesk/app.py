@@ -10,7 +10,7 @@ st.set_page_config(
     page_title="PulseDesk",
     page_icon="▣",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 # Cloud-safe: ensure SQLite schema exists before any page runs

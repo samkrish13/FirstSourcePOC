@@ -69,6 +69,7 @@ def _ensure_case_columns(conn: sqlite3.Connection) -> None:
         ("lead_note_to_agent", "TEXT"),
         ("sla_due_at", "TEXT"),
         ("received_at", "TEXT"),
+        ("source_mailbox", "TEXT"),
     ]
     for name, decl in migrations:
         if name not in cols:
@@ -112,6 +113,19 @@ def init_db() -> None:
                 channel TEXT,
                 content TEXT NOT NULL,
                 created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS linked_mailboxes (
+                id TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                address TEXT UNIQUE NOT NULL,
+                app_password TEXT,
+                status TEXT NOT NULL DEFAULT 'invited',
+                status_detail TEXT,
+                invited_by TEXT,
+                invited_at TEXT NOT NULL,
+                verified_at TEXT,
+                updated_at TEXT NOT NULL
             );
             """
         )
@@ -262,9 +276,10 @@ def list_inbox(
     assigned_to: str | None = None,
     unassigned_only: bool = False,
     statuses: list[str] | None = None,
+    source_mailbox: str | None = None,
     limit: int = 80,
 ) -> list[dict[str, Any]]:
-    """Work queue — filter by assignment and lifecycle status."""
+    """Work queue — filter by assignment, lifecycle status, and mailbox."""
     clauses: list[str] = []
     params: list[Any] = []
     if unassigned_only:
@@ -276,6 +291,9 @@ def list_inbox(
         placeholders = ",".join("?" * len(statuses))
         clauses.append(f"status IN ({placeholders})")
         params.extend(statuses)
+    if source_mailbox:
+        clauses.append("source_mailbox = ?")
+        params.append(source_mailbox)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     params.append(limit)
     with _connect() as conn:
@@ -354,6 +372,185 @@ def assign_case(case_id: str, assigned_to: str | None, *, updated_by: str | None
             """,
             (assigned_to, _now(), updated_by, case_id),
         )
+
+
+def set_source_mailbox(case_id: str, mailbox: str | None) -> None:
+    with _connect() as conn:
+        _ensure_case_columns(conn)
+        conn.execute(
+            "UPDATE cases SET source_mailbox = ? WHERE case_id = ?",
+            ((mailbox or "").strip() or None, case_id),
+        )
+
+
+def list_source_mailboxes() -> list[str]:
+    with _connect() as conn:
+        _ensure_case_columns(conn)
+        rows = conn.execute(
+            """
+            SELECT DISTINCT source_mailbox FROM cases
+            WHERE source_mailbox IS NOT NULL AND TRIM(source_mailbox) != ''
+            ORDER BY source_mailbox
+            """
+        ).fetchall()
+    return [str(r["source_mailbox"]) for r in rows]
+
+
+# --- Linked mailbox auth (in-app connect) ---
+
+MAILBOX_INVITED = "invited"
+MAILBOX_CONNECTED = "connected"
+MAILBOX_FAILED = "failed"
+MAILBOX_DISCONNECTED = "disconnected"
+
+MAILBOX_STATUS_LABELS = {
+    MAILBOX_INVITED: "Invitation sent — waiting for app password",
+    MAILBOX_CONNECTED: "Connected",
+    MAILBOX_FAILED: "Authentication failed",
+    MAILBOX_DISCONNECTED: "Disconnected",
+}
+
+
+def invite_mailbox(
+    address: str,
+    *,
+    label: str | None = None,
+    invited_by: str | None = None,
+) -> dict[str, Any]:
+    """Start connect flow: invitation sent, credentials not yet verified."""
+    import re
+    import uuid
+
+    addr = (address or "").strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", addr):
+        raise ValueError("Enter a valid email address.")
+    now = _now()
+    mid = f"mb-{uuid.uuid4().hex[:10]}"
+    nice = (label or "").strip() or addr.split("@")[0]
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT * FROM linked_mailboxes WHERE lower(address) = ?",
+            (addr,),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE linked_mailboxes
+                SET label = ?, status = ?, status_detail = ?,
+                    invited_by = ?, invited_at = ?, updated_at = ?,
+                    app_password = NULL, verified_at = NULL
+                WHERE id = ?
+                """,
+                (
+                    nice,
+                    MAILBOX_INVITED,
+                    "Invitation sent. Create a Google App Password and paste it here.",
+                    invited_by,
+                    now,
+                    now,
+                    existing["id"],
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM linked_mailboxes WHERE id = ?",
+                (existing["id"],),
+            ).fetchone()
+            return dict(row)
+        conn.execute(
+            """
+            INSERT INTO linked_mailboxes (
+                id, label, address, app_password, status, status_detail,
+                invited_by, invited_at, verified_at, updated_at
+            ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, NULL, ?)
+            """,
+            (
+                mid,
+                nice,
+                addr,
+                MAILBOX_INVITED,
+                "Invitation sent. Create a Google App Password and paste it here.",
+                invited_by,
+                now,
+                now,
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM linked_mailboxes WHERE id = ?", (mid,)
+        ).fetchone()
+    return dict(row)
+
+
+def save_mailbox_password(mailbox_id: str, app_password: str) -> None:
+    pwd = (app_password or "").replace(" ", "").strip()
+    if len(pwd) < 8:
+        raise ValueError("App password looks too short.")
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE linked_mailboxes
+            SET app_password = ?, updated_at = ?,
+                status_detail = 'Password saved — verifying connection…'
+            WHERE id = ?
+            """,
+            (pwd, _now(), mailbox_id),
+        )
+
+
+def set_mailbox_status(
+    mailbox_id: str,
+    status: str,
+    *,
+    detail: str | None = None,
+    clear_password: bool = False,
+) -> None:
+    with _connect() as conn:
+        fields = ["status = ?", "updated_at = ?"]
+        values: list[Any] = [status, _now()]
+        if detail is not None:
+            fields.append("status_detail = ?")
+            values.append(detail)
+        if status == MAILBOX_CONNECTED:
+            fields.append("verified_at = ?")
+            values.append(_now())
+        if clear_password:
+            fields.append("app_password = NULL")
+        values.append(mailbox_id)
+        conn.execute(
+            f"UPDATE linked_mailboxes SET {', '.join(fields)} WHERE id = ?",
+            values,
+        )
+
+
+def get_mailbox_row(mailbox_id: str) -> dict[str, Any] | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM linked_mailboxes WHERE id = ?",
+            (mailbox_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_linked_mailbox_rows() -> list[dict[str, Any]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM linked_mailboxes
+            ORDER BY
+              CASE status
+                WHEN 'connected' THEN 0
+                WHEN 'invited' THEN 1
+                WHEN 'failed' THEN 2
+                ELSE 3
+              END,
+              invited_at DESC
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_mailbox(mailbox_id: str) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM linked_mailboxes WHERE id = ?", (mailbox_id,))
 
 
 def next_action_order(case_id: str) -> int:

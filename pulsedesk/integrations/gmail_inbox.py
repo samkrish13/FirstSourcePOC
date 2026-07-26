@@ -1,10 +1,10 @@
 """Gmail inbound → PulseDesk work inbox (IMAP).
 
-Mailbox: examplefirstsource@gmail.com
+Supports one or many mailboxes via secrets / env.
 
 Requires a Google App Password (not the normal login password):
   Google Account → Security → 2-Step Verification → App passwords
-Store it in `.streamlit/secrets.toml` or `.env` — never commit it.
+Store credentials in `.streamlit/secrets.toml` or `.env` — never commit them.
 """
 
 from __future__ import annotations
@@ -23,50 +23,233 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MAILBOX_ADDRESS = "examplefirstsource@gmail.com"
+DEFAULT_MAILBOX = "examplefirstsource@gmail.com"
 IMAP_HOST = "imap.gmail.com"
 IMAP_PORT = 993
 
 
-def _secrets_gmail() -> dict[str, Any]:
+def _secrets_root() -> dict[str, Any]:
     try:
         import streamlit as st
 
-        block = st.secrets.get("gmail", {})
-        if hasattr(block, "to_dict"):
-            return dict(block.to_dict())
-        return dict(block) if block else {}
+        # Prefer nested mapping access without assuming AttrDict shape
+        return dict(st.secrets)  # type: ignore[arg-type]
     except Exception:
         return {}
 
 
-def gmail_credentials() -> tuple[str, str] | None:
-    """Return (address, app_password) or None if not configured."""
-    sec = _secrets_gmail()
-    address = (
-        str(sec.get("address") or "").strip()
-        or os.getenv("GMAIL_ADDRESS", "").strip()
-        or MAILBOX_ADDRESS
-    )
-    password = (
-        str(sec.get("app_password") or "").strip()
-        or os.getenv("GMAIL_APP_PASSWORD", "").strip()
-    )
-    password = password.replace(" ", "")
-    if not password:
-        return None
-    return address, password
+def _as_dict(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if hasattr(value, "to_dict"):
+        try:
+            return dict(value.to_dict())
+        except Exception:
+            pass
+    if isinstance(value, dict):
+        return dict(value)
+    try:
+        return dict(value)
+    except Exception:
+        return {}
+
+
+def list_mailboxes(*, connected_only: bool = True) -> list[dict[str, str]]:
+    """Mailboxes ready to sync: in-app connected accounts + optional secrets."""
+    found: list[dict[str, str]] = []
+
+    # 1) In-app authenticated mailboxes (preferred)
+    try:
+        import db as _db
+
+        _db.init_db()
+        for row in _db.list_linked_mailbox_rows():
+            status = str(row.get("status") or "")
+            password = str(row.get("app_password") or "").replace(" ", "")
+            address = str(row.get("address") or "").strip()
+            if not address:
+                continue
+            if connected_only and (
+                status != _db.MAILBOX_CONNECTED or not password
+            ):
+                continue
+            if not connected_only and status == _db.MAILBOX_DISCONNECTED:
+                continue
+            if not password and connected_only:
+                continue
+            found.append(
+                {
+                    "id": str(row["id"]),
+                    "label": str(row.get("label") or address),
+                    "address": address,
+                    "app_password": password,
+                    "status": status,
+                    "source": "app",
+                }
+            )
+    except Exception:
+        pass
+
+    # 2) Secrets / env fallback (ops bootstrap)
+    secrets = _secrets_root()
+    gmail = _as_dict(secrets.get("gmail"))
+    accounts = _as_dict(gmail.get("accounts"))
+    if accounts:
+        for key, raw in accounts.items():
+            block = _as_dict(raw)
+            address = str(block.get("address") or "").strip()
+            password = str(block.get("app_password") or "").strip().replace(" ", "")
+            if not address or not password:
+                continue
+            label = str(block.get("label") or key or address).strip()
+            found.append(
+                {
+                    "id": f"secret:{key}",
+                    "label": label,
+                    "address": address,
+                    "app_password": password,
+                    "status": "connected",
+                    "source": "secrets",
+                }
+            )
+    elif not found:
+        address = (
+            str(gmail.get("address") or "").strip()
+            or os.getenv("GMAIL_ADDRESS", "").strip()
+        )
+        password = (
+            str(gmail.get("app_password") or "").strip()
+            or os.getenv("GMAIL_APP_PASSWORD", "").strip()
+        ).replace(" ", "")
+        if address and password:
+            found.append(
+                {
+                    "id": "secret:default",
+                    "label": str(gmail.get("label") or "Primary").strip(),
+                    "address": address,
+                    "app_password": password,
+                    "status": "connected",
+                    "source": "secrets",
+                }
+            )
+
+    extra = os.getenv("GMAIL_ACCOUNTS", "").strip()
+    if extra:
+        for i, chunk in enumerate(extra.split(";")):
+            parts = [p.strip() for p in chunk.split("|")]
+            if len(parts) == 3 and parts[1] and parts[2]:
+                label, address, password = parts
+                found.append(
+                    {
+                        "id": f"env{i}",
+                        "label": label or address,
+                        "address": address,
+                        "app_password": password.replace(" ", ""),
+                        "status": "connected",
+                        "source": "env",
+                    }
+                )
+            elif len(parts) == 2 and parts[0] and parts[1]:
+                address, password = parts
+                found.append(
+                    {
+                        "id": f"env{i}",
+                        "label": address,
+                        "address": address,
+                        "app_password": password.replace(" ", ""),
+                        "status": "connected",
+                        "source": "env",
+                    }
+                )
+
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for box in found:
+        key = box["address"].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(box)
+    return out
 
 
 def gmail_configured() -> bool:
-    return gmail_credentials() is not None
+    return bool(list_mailboxes(connected_only=True))
 
 
 def mailbox_address() -> str:
-    creds = gmail_credentials()
-    if creds:
-        return creds[0]
-    return MAILBOX_ADDRESS
+    boxes = list_mailboxes(connected_only=True)
+    if boxes:
+        return boxes[0]["address"]
+    return DEFAULT_MAILBOX
+
+
+def get_mailbox(mailbox_id: str | None = None) -> dict[str, str] | None:
+    boxes = list_mailboxes(connected_only=True)
+    if not boxes:
+        return None
+    if mailbox_id:
+        for box in boxes:
+            if box["id"] == mailbox_id or box["address"] == mailbox_id:
+                return box
+    return boxes[0]
+
+
+def gmail_credentials(mailbox_id: str | None = None) -> tuple[str, str] | None:
+    box = get_mailbox(mailbox_id)
+    if not box:
+        return None
+    return box["address"], box["app_password"]
+
+
+def verify_imap_login(address: str, app_password: str) -> tuple[bool, str]:
+    """Try Gmail IMAP login. Returns (ok, message)."""
+    password = (app_password or "").replace(" ", "").strip()
+    addr = (address or "").strip()
+    if not addr or not password:
+        return False, "Email and app password are required."
+    client = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+    try:
+        client.login(addr, password)
+        client.select("INBOX")
+        return True, "Mailbox authenticated successfully."
+    except imaplib.IMAP4.error as exc:
+        return False, f"Gmail rejected the login: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Could not reach Gmail: {exc}"
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
+def complete_mailbox_auth(mailbox_id: str, app_password: str) -> tuple[bool, str]:
+    """Save app password, verify IMAP, mark connected or failed."""
+    import db as _db
+
+    row = _db.get_mailbox_row(mailbox_id)
+    if not row:
+        return False, "Mailbox invite not found."
+    try:
+        _db.save_mailbox_password(mailbox_id, app_password)
+    except ValueError as exc:
+        return False, str(exc)
+    ok, msg = verify_imap_login(str(row["address"]), app_password)
+    if ok:
+        _db.set_mailbox_status(
+            mailbox_id,
+            _db.MAILBOX_CONNECTED,
+            detail="Connected — ready to Sync Gmail.",
+        )
+        return True, msg
+    _db.set_mailbox_status(
+        mailbox_id,
+        _db.MAILBOX_FAILED,
+        detail=msg,
+        clear_password=True,
+    )
+    return False, msg
 
 
 def _decode_mime(value: str | None) -> str:
@@ -118,13 +301,18 @@ def _request_id_for_message(message_id: str) -> str:
     return f"GM{digest}"
 
 
-def fetch_inbox_messages(*, limit: int = 20, unseen_only: bool = False) -> list[dict[str, Any]]:
-    """Pull recent messages from the linked Gmail inbox via IMAP."""
-    creds = gmail_credentials()
+def fetch_inbox_messages(
+    *,
+    mailbox_id: str | None = None,
+    limit: int = 20,
+    unseen_only: bool = False,
+) -> list[dict[str, Any]]:
+    """Pull recent messages from a linked Gmail inbox via IMAP."""
+    creds = gmail_credentials(mailbox_id)
     if not creds:
         raise RuntimeError(
-            "Gmail is not configured. Set gmail.app_password in "
-            ".streamlit/secrets.toml (or GMAIL_APP_PASSWORD in .env)."
+            "Gmail is not configured. Add one or more accounts under [gmail.accounts.*] "
+            "in .streamlit/secrets.toml (see secrets.toml.example)."
         )
     address, password = creds
     client = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
@@ -179,6 +367,7 @@ def fetch_inbox_messages(*, limit: int = 20, unseen_only: bool = False) -> list[
 
 def sync_gmail_inbox(
     *,
+    mailbox_id: str | None = None,
     limit: int = 15,
     unseen_only: bool = False,
     actor: str = "gmail-sync",
@@ -187,8 +376,13 @@ def sync_gmail_inbox(
     import db
     from workflows.pipeline import process_request
 
-    mailbox = mailbox_address()
-    messages = fetch_inbox_messages(limit=limit, unseen_only=unseen_only)
+    box = get_mailbox(mailbox_id)
+    if not box:
+        raise RuntimeError("No Gmail mailbox configured.")
+    mailbox = box["address"]
+    messages = fetch_inbox_messages(
+        mailbox_id=box["id"], limit=limit, unseen_only=unseen_only
+    )
     created: list[str] = []
     skipped: list[str] = []
     errors: list[str] = []
@@ -205,6 +399,7 @@ def sync_gmail_inbox(
         body = (
             f"From: {from_addr}\n"
             f"To: {mailbox}\n"
+            f"Mailbox: {box.get('label') or mailbox}\n"
             f"Message-ID: {mid}\n\n"
             f"{item.get('body') or ''}"
         ).strip()
@@ -216,12 +411,15 @@ def sync_gmail_inbox(
                 assigned_to=None,
                 actor=actor,
             )
-            created.append(str(result.get("case_id") or case_id))
+            cid = str(result.get("case_id") or case_id)
+            db.set_source_mailbox(cid, mailbox)
+            created.append(cid)
         except Exception as exc:  # noqa: BLE001 — surface per-message sync errors
             errors.append(f"{mid}: {exc}")
 
     return {
         "mailbox": mailbox,
+        "label": box.get("label") or mailbox,
         "fetched": len(messages),
         "created": created,
         "skipped": skipped,

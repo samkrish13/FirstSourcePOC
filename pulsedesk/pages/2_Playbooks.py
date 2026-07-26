@@ -17,9 +17,14 @@ if not chrome("playbooks"):
     st.stop()
 page_header(
     "Playbooks",
-    "Six remediation strategies. Process runs one branch per case; Case Log stores the audit trail.",
+    "Six remediation branches — queue, steps, and expected outputs for each path.",
+    eyebrow="Remediation map",
 )
 
+st.markdown(
+    '<div class="pd-section"><div class="pd-section-title">Branch catalog</div></div>',
+    unsafe_allow_html=True,
+)
 st.dataframe(
     [
         {
@@ -46,7 +51,7 @@ st.markdown(
     f"""
 <div class="pd-section">
   <div class="pd-section-title">Mandatory outcomes (every branch)</div>
-  <ol style="margin:0;padding-left:1.1rem;font-size:0.9rem;line-height:1.55;color:#1F2933;">
+  <ol style="margin:0;padding-left:18px;font-size:14px;line-height:1.55;color:#1F2933;">
     <li><strong>Classification + urgency</strong></li>
     <li><strong>Branch-specific action summary</strong></li>
     <li><strong>Draft / confirmation message</strong></li>
@@ -55,7 +60,7 @@ st.markdown(
     <li><strong>Human-in-the-loop flag</strong> when confidence &lt; {CONFIDENCE_REVIEW_THRESHOLD:.0%}</li>
     <li><strong>Resolved status log</strong> + Case Log persistence</li>
   </ol>
-  <p style="margin:0.75rem 0 0;font-size:0.85rem;color:#5B6570;">
+  <p style="margin:12px 0 0;font-size:14px;color:#5B6570;">
     Confidence gate: below {CONFIDENCE_REVIEW_THRESHOLD:.0%} → Needs Review + pause auto-send.
   </p>
 </div>
