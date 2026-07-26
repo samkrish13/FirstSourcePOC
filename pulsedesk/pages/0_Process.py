@@ -72,7 +72,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-left, main = st.columns([1.15, 1.85], gap="medium")
+# Native Streamlit scroll panes (CSS alone is unreliable across versions)
+_PANE_H = 720
+_left_col, _main_col = st.columns([1.15, 1.85], gap="medium")
+left = _left_col.container(height=_PANE_H, border=False)
+main = _main_col.container(height=_PANE_H, border=False)
 
 with left:
     if role == "lead":

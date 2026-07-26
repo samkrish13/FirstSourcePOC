@@ -2354,30 +2354,17 @@ div[data-testid="stDataFrame"] td {{
 .pd-out-row .v.warn {{ font-weight: 600; color: {ALERT_INK}; }}
 .pd-out-row .v.ok {{ font-weight: 600; color: #1F6B3A; }}
 
-/* Process desk: inbox | workbench scroll independently (desktop) */
-@media (min-width: 901px) {{
-  .stApp:has(.pd-split-desk) section.main [data-testid="stHorizontalBlock"]:has(
-    > [data-testid="column"]:nth-child(2)
-  ) {{
-    align-items: stretch !important;
-    gap: 0.75rem !important;
-  }}
-  .stApp:has(.pd-split-desk) section.main [data-testid="stHorizontalBlock"]:has(
-    > [data-testid="column"]:nth-child(2)
-  ) > [data-testid="column"] {{
-    height: calc(100vh - 148px) !important;
-    max-height: calc(100vh - 148px) !important;
-    overflow-x: hidden !important;
-    overflow-y: auto !important;
-    overscroll-behavior: contain;
-    padding-right: 4px;
-  }}
-  .stApp:has(.pd-split-desk) section.main [data-testid="stHorizontalBlock"]:has(
-    > [data-testid="column"]:nth-child(2)
-  ) > [data-testid="column"] > div {{
-    height: auto !important;
+/* Process desk scroll panes — st.container(height=…) owns overflow; tidy borders */
+.stApp:has(.pd-split-desk) section.main [data-testid="stVerticalBlockBorderWrapper"]:has(
+  [data-testid="stVerticalBlock"]
+) {{
+  border: none !important;
+}}
+@media (max-width: 900px) {{
+  /* Stacked on phones — let page scroll; don't trap in short panes */
+  .stApp:has(.pd-split-desk) section.main [data-testid="stVerticalBlockBorderWrapper"] {{
     max-height: none !important;
-    overflow: visible !important;
+    height: auto !important;
   }}
 }}
 
