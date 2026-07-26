@@ -1336,11 +1336,23 @@ section.main .block-container,
   padding: 8px 20px 24px 20px !important;
 }}
 #MainMenu, footer {{ visibility: hidden; }}
-header[data-testid="stHeader"],
-div[data-testid="stToolbar"],
-div[data-testid="stDecoration"],
-[data-testid="stAppToolbar"],
-.stAppHeader {{
+/* Desktop / login: hide Streamlit chrome. Mobile (logged-in) keeps a slim header for the nav toggle. */
+@media (min-width: 901px) {{
+  header[data-testid="stHeader"],
+  div[data-testid="stToolbar"],
+  div[data-testid="stDecoration"],
+  [data-testid="stAppToolbar"],
+  .stAppHeader {{
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+  }}
+}}
+.stApp:has(.pd-login-anchor) header[data-testid="stHeader"],
+.stApp:has(.pd-login-anchor) div[data-testid="stToolbar"],
+.stApp:has(.pd-login-anchor) div[data-testid="stDecoration"],
+.stApp:has(.pd-login-anchor) [data-testid="stAppToolbar"],
+.stApp:has(.pd-login-anchor) .stAppHeader {{
   display: none !important;
   height: 0 !important;
   min-height: 0 !important;
@@ -2377,74 +2389,143 @@ div[data-testid="stDialog"] [data-testid="stMarkdownContainer"] h2 {{
     padding-right: 12px !important;
   }}
 
-  /* Mobile: collapsible overlay nav — don't force-open over the page */
+  /* Slim top bar — hosts Streamlit's open-nav (hamburger) control */
+  .stApp:not(:has(.pd-login-anchor)) header[data-testid="stHeader"] {{
+    display: block !important;
+    visibility: visible !important;
+    height: 52px !important;
+    min-height: 52px !important;
+    background: {BG} !important;
+    border-bottom: 1px solid {LINE} !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 1200 !important;
+  }}
+  .stApp:not(:has(.pd-login-anchor)) header[data-testid="stHeader"] [data-testid="stToolbar"] {{
+    display: flex !important;
+    visibility: visible !important;
+    align-items: center !important;
+    height: 52px !important;
+    padding: 0 8px !important;
+  }}
+  /* Keep only the sidebar open control; hide deploy / overflow chrome */
+  .stApp:not(:has(.pd-login-anchor)) header[data-testid="stHeader"] [data-testid="stToolbarActions"],
+  .stApp:not(:has(.pd-login-anchor)) header[data-testid="stHeader"] [data-testid="stAppDeployButton"],
+  .stApp:not(:has(.pd-login-anchor)) header[data-testid="stHeader"] [data-testid="stDecoration"] {{
+    display: none !important;
+  }}
+  .stApp:not(:has(.pd-login-anchor)) header[data-testid="stHeader"] button,
+  .stApp:not(:has(.pd-login-anchor)) div[data-testid="stSidebarCollapsedControl"],
+  .stApp:not(:has(.pd-login-anchor)) [data-testid="collapsedControl"],
+  .stApp:not(:has(.pd-login-anchor)) [data-testid="stExpandSidebarButton"] {{
+    display: inline-flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    min-height: 40px !important;
+    border-radius: 10px !important;
+    background: {SURFACE} !important;
+    border: 1px solid {LINE} !important;
+    box-shadow: 0 2px 8px rgba(16, 24, 40, 0.08) !important;
+    color: {INK} !important;
+  }}
+  .stApp:not(:has(.pd-login-anchor)) div[data-testid="stSidebarCollapsedControl"] {{
+    position: fixed !important;
+    top: 8px !important;
+    left: 8px !important;
+    z-index: 1300 !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }}
+
+  /* Overlay drawer when open; allow native collapse when closed */
   .stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] {{
     position: fixed !important;
-    z-index: 1000 !important;
+    z-index: 1250 !important;
     height: 100vh !important;
     max-height: 100vh !important;
     background: #FFFFFF !important;
     border-right: 1px solid #E2E8F0 !important;
-    box-shadow: 8px 0 24px rgba(16, 24, 40, 0.12) !important;
+    box-shadow: 8px 0 24px rgba(16, 24, 40, 0.14) !important;
   }}
   .stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"][aria-expanded="true"] {{
     display: flex !important;
     visibility: visible !important;
-    width: min(300px, 86vw) !important;
-    min-width: min(300px, 86vw) !important;
-    max-width: min(300px, 86vw) !important;
+    width: min(300px, 88vw) !important;
+    min-width: min(300px, 88vw) !important;
+    max-width: min(300px, 88vw) !important;
     left: 0 !important;
     top: 0 !important;
     margin: 0 !important;
     transform: none !important;
   }}
+  /* Do not hard-hide collapsed sidebar — Streamlit needs the node for reopen controls */
   .stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"][aria-expanded="false"] {{
-    display: none !important;
-    visibility: hidden !important;
     width: 0 !important;
     min-width: 0 !important;
     max-width: 0 !important;
+    transform: translateX(-110%) !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    box-shadow: none !important;
+    border: none !important;
   }}
-  /* Show Streamlit's open/close controls on mobile */
   .stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"],
   .stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] button[kind="header"],
-  .stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stSidebarHeader"],
-  .stApp:not(:has(.pd-login-anchor)) div[data-testid="stSidebarCollapsedControl"],
-  .stApp:not(:has(.pd-login-anchor)) [data-testid="stSidebarCollapseButton"] {{
+  .stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {{
     display: flex !important;
     visibility: visible !important;
     width: auto !important;
     height: auto !important;
-    min-height: 0 !important;
-    padding: 0 !important;
-    margin: 0 !important;
     opacity: 1 !important;
     pointer-events: auto !important;
   }}
-  .stApp:not(:has(.pd-login-anchor)) div[data-testid="stSidebarCollapsedControl"] {{
-    position: fixed !important;
-    top: 10px !important;
-    left: 10px !important;
-    z-index: 1100 !important;
-    background: #FFFFFF !important;
-    border: 1px solid #E2E8F0 !important;
-    border-radius: 10px !important;
-    box-shadow: 0 4px 14px rgba(16, 24, 40, 0.12) !important;
-    padding: 4px !important;
+  /* Let nav scroll so Process / Case Log / profile aren't clipped */
+  .stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
+  .stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
   }}
   .stApp:not(:has(.pd-login-anchor)) section.main .block-container,
   .stApp:not(:has(.pd-login-anchor)) [data-testid="stMainBlockContainer"] {{
-    padding-top: 48px !important;
+    padding-top: 12px !important;
   }}
-  /* Profile dock: pin inside overlay width on mobile */
+  /* Main content must stay usable full-width under the drawer */
+  .stApp:not(:has(.pd-login-anchor)) section.main,
+  .stApp:not(:has(.pd-login-anchor)) [data-testid="stAppViewContainer"] > .main {{
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+  }}
+  /* Stack workbench columns so inbox + case panel both show */
+  .stApp:not(:has(.pd-login-anchor)) section.main [data-testid="stHorizontalBlock"] {{
+    flex-wrap: wrap !important;
+  }}
+  .stApp:not(:has(.pd-login-anchor)) section.main [data-testid="stHorizontalBlock"] > [data-testid="column"] {{
+    min-width: min(100%, 320px) !important;
+    flex: 1 1 100% !important;
+  }}
+  /* Profile dock stays in-flow on mobile so it doesn't cover the page */
   .stApp:not(:has(.pd-login-anchor)) section[data-testid="stSidebar"]
     [data-testid="stSidebarUserContent"]
     > div
     > div[data-testid="stVerticalBlock"]
     > :last-child {{
-    left: 12px !important;
-    width: calc(min(300px, 86vw) - 24px) !important;
-    max-width: calc(min(300px, 86vw) - 24px) !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    left: auto !important;
+    bottom: auto !important;
+    margin-top: 16px !important;
+    padding-top: 12px !important;
+    border-top: 1px solid {LINE} !important;
+    background: transparent !important;
   }}
 }}
 @media (max-width: 640px) {{
@@ -2528,16 +2609,34 @@ def _inject_sidebar_visibility() -> None:
   }}
 }}
 @media (max-width: 900px) {{
+  header[data-testid="stHeader"] {{
+    display: block !important;
+    visibility: visible !important;
+    height: 52px !important;
+    min-height: 52px !important;
+    background: {BG} !important;
+    border-bottom: 1px solid {LINE} !important;
+    z-index: 1200 !important;
+  }}
+  header[data-testid="stHeader"] button,
+  div[data-testid="stSidebarCollapsedControl"],
+  [data-testid="stExpandSidebarButton"],
+  [data-testid="collapsedControl"] {{
+    display: inline-flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }}
   section[data-testid="stSidebar"][aria-expanded="true"] {{
     display: flex !important;
     visibility: visible !important;
     position: fixed !important;
-    z-index: 1000 !important;
+    z-index: 1250 !important;
     left: 0 !important;
     top: 0 !important;
-    width: min(300px, 86vw) !important;
-    min-width: min(300px, 86vw) !important;
-    max-width: min(300px, 86vw) !important;
+    width: min(300px, 88vw) !important;
+    min-width: min(300px, 88vw) !important;
+    max-width: min(300px, 88vw) !important;
     height: 100vh !important;
     background: {SURFACE} !important;
     border-right: 1px solid {LINE} !important;
@@ -2545,34 +2644,25 @@ def _inject_sidebar_visibility() -> None:
     margin: 0 !important;
   }}
   section[data-testid="stSidebar"][aria-expanded="false"] {{
-    display: none !important;
-    visibility: hidden !important;
     width: 0 !important;
     min-width: 0 !important;
     max-width: 0 !important;
+    transform: translateX(-110%) !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    box-shadow: none !important;
   }}
-  div[data-testid="stSidebarCollapsedControl"],
-  [data-testid="stSidebarCollapseButton"],
   section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"],
   section[data-testid="stSidebar"] button[kind="header"] {{
     display: flex !important;
     visibility: visible !important;
-    width: auto !important;
-    height: auto !important;
-    min-height: 0 !important;
     opacity: 1 !important;
     pointer-events: auto !important;
   }}
-  div[data-testid="stSidebarCollapsedControl"] {{
-    position: fixed !important;
-    top: 10px !important;
-    left: 10px !important;
-    z-index: 1100 !important;
-    background: {SURFACE} !important;
-    border: 1px solid {LINE} !important;
-    border-radius: 10px !important;
-    box-shadow: 0 4px 14px rgba(16, 24, 40, 0.12) !important;
-    padding: 4px !important;
+  section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
+  section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
   }}
 }}
 section[data-testid="stSidebar"] *,
