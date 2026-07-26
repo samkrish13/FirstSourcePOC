@@ -165,7 +165,10 @@ with left:
                 source_mailbox=source_filter,
             )
         else:
-            inbox = db.list_inbox(source_mailbox=source_filter)
+            # Active desk: hide Released so "All" doesn't look like open work
+            inbox = db.list_inbox(
+                statuses=_WORK_STATUSES, source_mailbox=source_filter
+            )
 
         q = st.text_input(
             "Search inbox",
@@ -379,10 +382,13 @@ with main:
             or banner_case.get("subject")
             or "Untitled request"
         )
+        closed = status == db.STATUS_RELEASED
+        eyebrow = "Closed · Released" if closed else "Open in workbench"
+        banner_cls = "pd-case-banner released" if closed else "pd-case-banner"
         st.markdown(
             f"""
-<div class="pd-case-banner">
-  <div class="eyebrow">Open in workbench</div>
+<div class="{banner_cls}">
+  <div class="eyebrow">{html.escape(eyebrow)}</div>
   <div class="case-id">{html.escape(src_id)}</div>
   <div class="subject">{html.escape(str(subject))}</div>
   <div class="meta">

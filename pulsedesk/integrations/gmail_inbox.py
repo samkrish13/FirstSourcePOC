@@ -1,6 +1,6 @@
-"""Gmail inbound → PulseDesk work inbox (IMAP).
+"""Gmail inbound (IMAP) + optional outbound reply (SMTP).
 
-Supports one or many mailboxes via secrets / env.
+Supports one or many mailboxes via secrets / env / in-app connect.
 
 Requires a Google App Password (not the normal login password):
   Google Account → Security → 2-Step Verification → App passwords
@@ -14,8 +14,9 @@ import hashlib
 import imaplib
 import os
 import re
+import smtplib
 from email.header import decode_header
-from email.message import Message
+from email.message import EmailMessage, Message
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -26,6 +27,12 @@ load_dotenv()
 DEFAULT_MAILBOX = "examplefirstsource@gmail.com"
 IMAP_HOST = "imap.gmail.com"
 IMAP_PORT = 993
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 587
+
+_FROM_LINE_RE = re.compile(r"(?im)^From:\s*(.+?)\s*$")
+_MSG_ID_LINE_RE = re.compile(r"(?im)^Message-ID:\s*(.+?)\s*$")
+_EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 
 
 def _secrets_root() -> dict[str, Any]:
@@ -425,3 +432,144 @@ def sync_gmail_inbox(
         "skipped": skipped,
         "errors": errors,
     }
+
+
+def extract_customer_email(body: str, *, exclude: set[str] | None = None) -> str | None:
+    """Pull customer address from synced body `From:` line (or first email in text)."""
+    exclude_l = {e.strip().lower() for e in (exclude or set()) if e}
+    blob = body or ""
+    m = _FROM_LINE_RE.search(blob)
+    candidates = _EMAIL_RE.findall(m.group(1) if m else blob[:800])
+    for addr in candidates:
+        if addr.strip().lower() not in exclude_l:
+            return addr.strip()
+    return None
+
+
+def extract_inbound_message_id(body: str) -> str | None:
+    m = _MSG_ID_LINE_RE.search(body or "")
+    if not m:
+        return None
+    mid = m.group(1).strip()
+    return mid or None
+
+
+def send_reply(
+    *,
+    to_addr: str,
+    subject: str,
+    body: str,
+    mailbox_id: str | None = None,
+    in_reply_to: str | None = None,
+) -> dict[str, Any]:
+    """Send a real reply via Gmail SMTP using a connected mailbox App Password.
+
+    Returns {{ok, simulated, detail, from, to, mailbox_id}}.
+    """
+    to_addr = (to_addr or "").strip()
+    if not to_addr or "@" not in to_addr:
+        return {
+            "ok": False,
+            "simulated": True,
+            "detail": "No customer email on this case — release logged as simulated.",
+            "from": None,
+            "to": None,
+            "mailbox_id": mailbox_id,
+        }
+
+    box = get_mailbox(mailbox_id)
+    if not box:
+        return {
+            "ok": False,
+            "simulated": True,
+            "detail": "No connected Gmail mailbox — release logged as simulated.",
+            "from": None,
+            "to": to_addr,
+            "mailbox_id": mailbox_id,
+        }
+
+    from_addr = str(box["address"]).strip()
+    password = str(box.get("app_password") or "").replace(" ", "").strip()
+    if not password:
+        return {
+            "ok": False,
+            "simulated": True,
+            "detail": f"Mailbox {from_addr} has no App Password — simulated release.",
+            "from": from_addr,
+            "to": to_addr,
+            "mailbox_id": box["id"],
+        }
+
+    subj = (subject or "").strip() or "(no subject)"
+    if not re.match(r"(?i)^re:\s*", subj):
+        subj = f"Re: {subj}"
+
+    msg = EmailMessage()
+    msg["Subject"] = subj
+    msg["From"] = from_addr
+    msg["To"] = to_addr
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+        msg["References"] = in_reply_to
+    msg.set_content(body or "")
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.ehlo()
+            smtp.login(from_addr, password)
+            smtp.send_message(msg)
+        return {
+            "ok": True,
+            "simulated": False,
+            "detail": f"Sent from {from_addr} → {to_addr}",
+            "from": from_addr,
+            "to": to_addr,
+            "mailbox_id": box["id"],
+            "subject": subj,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "simulated": True,
+            "detail": f"SMTP send failed ({exc}); release logged as simulated.",
+            "from": from_addr,
+            "to": to_addr,
+            "mailbox_id": box["id"],
+        }
+
+
+def try_send_case_release(
+    case: dict[str, Any] | None,
+    draft: str,
+    *,
+    mailbox_id: str | None = None,
+) -> dict[str, Any]:
+    """Best-effort real send for Release / Approve using case body + connected mailbox."""
+    case = case or {}
+    body = str(case.get("body") or "")
+    source_mb = str(case.get("source_mailbox") or "").strip()
+    boxes = list_mailboxes(connected_only=True)
+    chosen_id = mailbox_id
+    if not chosen_id and source_mb:
+        for b in boxes:
+            if b.get("address", "").lower() == source_mb.lower():
+                chosen_id = b["id"]
+                break
+    if not chosen_id and boxes:
+        chosen_id = boxes[0]["id"]
+
+    exclude = {source_mb} if source_mb else set()
+    for b in boxes:
+        exclude.add(str(b.get("address") or ""))
+
+    to_addr = extract_customer_email(body, exclude=exclude)
+    in_reply_to = extract_inbound_message_id(body)
+    return send_reply(
+        to_addr=to_addr or "",
+        subject=str(case.get("subject") or ""),
+        body=draft or "",
+        mailbox_id=chosen_id,
+        in_reply_to=in_reply_to,
+    )

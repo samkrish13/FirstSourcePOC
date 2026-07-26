@@ -1298,7 +1298,11 @@ def open_in_workspace(item: dict[str, Any]) -> None:
     st.session_state.selected_inbox_id = item["id"]
     st.session_state.workspace_source_id = item["id"]
     st.session_state.workspace_subject = item.get("subject") or ""
-    st.session_state.workspace_body = item.get("body") or ""
+    body = str(item.get("body") or "")
+    from_addr = str(item.get("from") or "").strip()
+    if from_addr and not re.search(r"(?im)^From:\s*", body):
+        body = f"From: {from_addr}\n\n{body}".strip()
+    st.session_state.workspace_body = body
     st.session_state.last_result = None
     st.session_state.pop("replay_banner", None)
     _clear_draft_keys()
@@ -1792,6 +1796,53 @@ section[data-testid="stSidebar"] [data-testid="stButton"] button {{
 }}
 .pd-page-head .pd-page-points {{
   display: none !important;
+}}
+
+.pd-case-banner {{
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid {LINE};
+  background: {SURFACE};
+}}
+.pd-case-banner .eyebrow {{
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: {MUTED};
+  margin-bottom: 4px;
+}}
+.pd-case-banner .case-id {{
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: {BRAND};
+  font-weight: 600;
+}}
+.pd-case-banner .subject {{
+  font-size: 15px;
+  font-weight: 600;
+  color: {INK};
+  margin: 4px 0 6px;
+  line-height: 1.35;
+}}
+.pd-case-banner .meta {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: 12px;
+  color: {MUTED};
+}}
+.pd-case-banner.released {{
+  border-color: #86EFAC;
+  background: #F0FDF4;
+}}
+.pd-case-banner.released .eyebrow {{
+  color: #166534;
+}}
+.pd-case-banner.empty {{
+  border-style: dashed;
+  opacity: 0.9;
 }}
 
 .pd-empty {{
@@ -3160,35 +3211,58 @@ def apply_agent_decision(
 
     user = current_user() or {}
     actor = user.get("name") or user.get("username") or "agent"
+    case_row = db.get_case(case_id) or {}
 
-    labels = {
-        "approved_send": (
-            "agent_approved_send",
-            f"{actor} released outbound draft (simulated until email channel is wired).",
-        ),
-        "edited_send": (
-            "agent_edited_send",
-            f"{actor} released edited draft (simulated until email channel is wired).",
-        ),
-        "escalated_lead": (
-            "agent_escalated_to_lead",
-            f"{actor} escalated to Tech Lead — reason: {reason or 'n/a'}.",
-        ),
-    }
+    send_meta: dict[str, Any] | None = None
+    if decision in ("approved_send", "edited_send"):
+        from integrations.gmail_inbox import try_send_case_release
+
+        send_meta = try_send_case_release(case_row, draft)
+        if send_meta.get("ok") and not send_meta.get("simulated"):
+            release_detail = (
+                f"{actor} released draft — email sent "
+                f"({send_meta.get('from')} → {send_meta.get('to')})."
+            )
+        else:
+            release_detail = (
+                f"{actor} released draft — "
+                f"{send_meta.get('detail') or 'simulated (no live send)'}."
+            )
+        labels = {
+            "approved_send": ("agent_approved_send", release_detail),
+            "edited_send": ("agent_edited_send", release_detail),
+            "escalated_lead": (
+                "agent_escalated_to_lead",
+                f"{actor} escalated to Tech Lead — reason: {reason or 'n/a'}.",
+            ),
+        }
+    else:
+        labels = {
+            "approved_send": (
+                "agent_approved_send",
+                f"{actor} released outbound draft (simulated).",
+            ),
+            "edited_send": (
+                "agent_edited_send",
+                f"{actor} released edited draft (simulated).",
+            ),
+            "escalated_lead": (
+                "agent_escalated_to_lead",
+                f"{actor} escalated to Tech Lead — reason: {reason or 'n/a'}.",
+            ),
+        }
+
     action_type, detail = labels[decision]
     order = db.next_action_order(case_id)
-    db.log_action(
-        case_id,
-        order,
-        action_type,
-        detail,
-        {
-            "decision": decision,
-            "draft_chars": len(draft or ""),
-            "reason": reason,
-            "by": actor,
-        },
-    )
+    payload: dict[str, Any] = {
+        "decision": decision,
+        "draft_chars": len(draft or ""),
+        "reason": reason,
+        "by": actor,
+    }
+    if send_meta:
+        payload["outbound"] = send_meta
+    db.log_action(case_id, order, action_type, detail, payload)
 
     if decision in ("approved_send", "edited_send"):
         db.log_message(case_id, draft or "", direction="outbound", channel="email")
@@ -3196,6 +3270,14 @@ def apply_agent_decision(
         db.set_case_status(case_id, db.STATUS_RELEASED, updated_by=actor)
         result["needs_review"] = False
         result["status"] = db.STATUS_RELEASED
+        result["outbound_send"] = send_meta
+        # Drop from active inbox selection so Mine/Unassigned refresh feels closed
+        st.session_state.selected_inbox_id = None
+        st.session_state["_release_flash"] = {
+            "case_id": case_id,
+            "sent": bool(send_meta and send_meta.get("ok") and not send_meta.get("simulated")),
+            "detail": (send_meta or {}).get("detail") or "Case marked Released.",
+        }
     else:
         db.set_needs_review(case_id, True)
         db.set_case_status(
@@ -3214,7 +3296,7 @@ def apply_agent_decision(
         {
             "action_type": action_type,
             "detail": detail,
-            "payload": {"decision": decision, "reason": reason, "by": actor},
+            "payload": payload,
         }
     )
     rem["steps"] = steps
@@ -3224,8 +3306,12 @@ def apply_agent_decision(
         rem["steps"].append(
             {
                 "action_type": "set_resolved_status",
-                "detail": "Status → Released",
-                "payload": {"status": db.STATUS_RELEASED, "resolved_status_log": True},
+                "detail": "Status → Released (closed)",
+                "payload": {
+                    "status": db.STATUS_RELEASED,
+                    "resolved_status_log": True,
+                    "outbound": send_meta,
+                },
             }
         )
     result["remediation"] = rem
@@ -3240,7 +3326,7 @@ def apply_agent_decision(
         case_id=case_id,
     )
     rem["outputs"] = result["outputs"]
-    _toast_decision(decision, case_id)
+    _toast_decision(decision, case_id, send_meta=send_meta)
     return result
 
 
@@ -3259,16 +3345,33 @@ def apply_lead_decision(
 
     user = current_user() or {}
     actor = user.get("name") or user.get("username") or "lead"
+    case_row = db.get_case(case_id) or {}
+
+    send_meta: dict[str, Any] | None = None
+    if decision == "approved_release":
+        from integrations.gmail_inbox import try_send_case_release
+
+        body_draft = draft or (result.get("remediation") or {}).get("email_draft") or ""
+        send_meta = try_send_case_release(case_row, body_draft)
+        if send_meta.get("ok") and not send_meta.get("simulated"):
+            approve_detail = (
+                f"{actor} approved release — email sent "
+                f"({send_meta.get('from')} → {send_meta.get('to')})."
+            )
+        else:
+            approve_detail = (
+                f"{actor} approved release — "
+                f"{send_meta.get('detail') or 'simulated (no live send)'}."
+            )
+    else:
+        approve_detail = f"{actor} approved release (simulated)."
 
     labels = {
         "acknowledged": (
             "lead_acknowledged",
             f"{actor} acknowledged escalation — ownership taken.",
         ),
-        "approved_release": (
-            "lead_approved_release",
-            f"{actor} approved release (simulated until email channel is wired).",
-        ),
+        "approved_release": ("lead_approved_release", approve_detail),
         "returned_to_agent": (
             "lead_returned_to_agent",
             f"{actor} returned to agent — reason: {reason or 'n/a'}.",
@@ -3295,6 +3398,8 @@ def apply_lead_decision(
     if decision == "approved_release" and draft:
         payload["draft_chars"] = len(draft)
         payload["draft_edited"] = True
+    if send_meta:
+        payload["outbound"] = send_meta
     order = db.next_action_order(case_id)
     db.log_action(case_id, order, action_type, detail, payload)
 
@@ -3305,6 +3410,13 @@ def apply_lead_decision(
         db.set_case_status(case_id, db.STATUS_RELEASED, updated_by=actor)
         result["needs_review"] = False
         result["status"] = db.STATUS_RELEASED
+        result["outbound_send"] = send_meta
+        st.session_state.lead_queue_focus = None
+        st.session_state["_release_flash"] = {
+            "case_id": case_id,
+            "sent": bool(send_meta and send_meta.get("ok") and not send_meta.get("simulated")),
+            "detail": (send_meta or {}).get("detail") or "Case marked Released.",
+        }
         if draft:
             rem = dict(result.get("remediation") or {})
             rem["email_draft"] = draft
@@ -3349,8 +3461,12 @@ def apply_lead_decision(
         steps.append(
             {
                 "action_type": "set_resolved_status",
-                "detail": "Status → Released (lead)",
-                "payload": {"status": db.STATUS_RELEASED, "resolved_status_log": True},
+                "detail": "Status → Released (closed · lead)",
+                "payload": {
+                    "status": db.STATUS_RELEASED,
+                    "resolved_status_log": True,
+                    "outbound": send_meta,
+                },
             }
         )
     rem["steps"] = steps
@@ -3367,7 +3483,7 @@ def apply_lead_decision(
         case_id=case_id,
     )
     rem["outputs"] = result["outputs"]
-    _toast_decision(decision, case_id)
+    _toast_decision(decision, case_id, send_meta=send_meta)
     return result
 
 
@@ -3798,17 +3914,26 @@ def _render_html(fragment: str) -> None:
         st.markdown(compact, unsafe_allow_html=True)
 
 
-def _toast_decision(kind: str, case_id: str) -> None:
-    labels = {
-        "escalated_lead": "Escalation (simulated)",
-        "approved_send": "Release (simulated)",
-        "edited_send": "Release (simulated)",
-        "acknowledged": "Lead acknowledged (simulated)",
-        "approved_release": "Lead approved release (simulated)",
-        "returned_to_agent": "Returned to agent (simulated)",
-        "note": "Lead note (simulated)",
-    }
-    st.toast(f"{labels.get(kind, kind)} · {case_id}")
+def _toast_decision(
+    kind: str, case_id: str, *, send_meta: dict[str, Any] | None = None
+) -> None:
+    sent = bool(send_meta and send_meta.get("ok") and not send_meta.get("simulated"))
+    if kind in ("approved_send", "edited_send", "approved_release"):
+        if sent:
+            label = "Released · email sent"
+        elif send_meta:
+            label = "Released · simulated send"
+        else:
+            label = "Released"
+    else:
+        labels = {
+            "escalated_lead": "Escalated to lead",
+            "acknowledged": "Lead acknowledged",
+            "returned_to_agent": "Returned to agent",
+            "note": "Lead note saved",
+        }
+        label = labels.get(kind, kind)
+    st.toast(f"{label} · {case_id}")
 
 
 def _case_outputs(result: dict[str, Any]) -> dict[str, Any]:
@@ -3985,6 +4110,32 @@ def render_result_spine(result: dict[str, Any]) -> None:
             + (f" — {return_reason}" if return_reason else "")
             + (f"\n\nNote for agent: {lead_note}" if lead_note else "")
         )
+
+    flash = st.session_state.pop("_release_flash", None)
+    if isinstance(flash, dict) and flash.get("case_id") == case_id:
+        if flash.get("sent"):
+            st.success(
+                f"**Case closed · Released** — email sent. {flash.get('detail') or ''}"
+            )
+        else:
+            st.success(
+                f"**Case closed · Released** — {flash.get('detail') or 'Logged as released.'}"
+            )
+    elif case_status == db.STATUS_RELEASED or decision in (
+        "approved_send",
+        "edited_send",
+    ) or lead_decision == "approved_release":
+        outbound = result.get("outbound_send") or {}
+        if outbound.get("ok") and not outbound.get("simulated"):
+            st.success(
+                f"**Case closed · Released** — reply emailed "
+                f"({outbound.get('from')} → {outbound.get('to')})."
+            )
+        else:
+            st.success(
+                "**Case closed · Released** — removed from active Mine / Unassigned. "
+                "See Case Log for the audit trail."
+            )
 
     if is_replay and is_agent and case_status not in (db.STATUS_RETURNED, db.STATUS_ON_HOLD):
         st.info(
@@ -4258,7 +4409,7 @@ def render_result_spine(result: dict[str, Any]) -> None:
                 type="primary",
                 key=f"dec_send_{case_id}",
                 width="stretch",
-                help="Marks draft released (simulated until email is wired).",
+                help="Marks case Released. Sends real email if a Gmail mailbox is connected.",
             )
         with g2:
             edit = st.button(
@@ -4333,7 +4484,10 @@ def render_result_spine(result: dict[str, Any]) -> None:
             '<div class="pd-section"><div class="pd-section-title">Lead actions</div></div>',
             unsafe_allow_html=True,
         )
-        st.caption("Outbound release stays simulated until email is wired.")
+        st.caption(
+            "Approve release sends the draft when a Gmail mailbox is connected; "
+            "otherwise it logs a simulated release."
+        )
         draft_now = st.session_state.get(widget_key) or draft
         ret_reason = st.selectbox(
             "Return reason (required to return)",
