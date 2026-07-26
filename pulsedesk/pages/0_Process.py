@@ -105,7 +105,11 @@ with left:
                 """
 <div class="pd-empty">
   <div class="pd-empty-title">No escalated cases</div>
-  <div class="pd-empty-hint">Agents escalate Needs Review work here for lead decision.</div>
+  <div class="pd-empty-hint">
+    This lead queue only shows cases an agent has escalated.
+    Sign out → sign in as agent (<code>p.sharma</code> / <code>agent</code>) to sync Gmail,
+    run playbooks, then <strong>Escalate to lead</strong>. Those cases appear here.
+  </div>
 </div>
                 """,
                 unsafe_allow_html=True,

@@ -1458,6 +1458,47 @@ section.main .block-container,
   min-height: 0 !important;
 }}
 
+/* Mobile page tabs — hidden on desktop (sidebar is enough there) */
+@media (min-width: 901px) {{
+  section.main [data-testid="stElementContainer"]:has(.pd-mobile-nav-anchor),
+  section.main [data-testid="stElementContainer"]:has(.pd-mobile-nav-anchor) + [data-testid="stHorizontalBlock"],
+  section.main [data-testid="stElementContainer"]:has(.pd-mobile-nav-anchor) + div[data-testid="stElementContainer"] {{
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }}
+}}
+@media (max-width: 900px) {{
+  section.main [data-testid="stElementContainer"]:has(.pd-mobile-nav-anchor) {{
+    display: none !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }}
+  section.main [data-testid="stElementContainer"]:has(.pd-mobile-nav-anchor) + [data-testid="stHorizontalBlock"],
+  section.main [data-testid="stHorizontalBlock"]:has(a[data-testid="stPageLink-NavLink"]) {{
+    display: flex !important;
+    gap: 6px !important;
+    margin: 0 0 10px 0 !important;
+    padding: 8px !important;
+    background: {SURFACE} !important;
+    border: 1px solid {LINE} !important;
+    border-radius: 12px !important;
+  }}
+  section.main [data-testid="stHorizontalBlock"]:has(a[data-testid="stPageLink-NavLink"])
+    a[data-testid="stPageLink-NavLink"] {{
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    min-height: 36px !important;
+    padding: 6px 8px !important;
+    border-radius: 8px !important;
+    justify-content: center !important;
+  }}
+}}
+
 /* Brand Card */
 .pd-side-brand-card {{
   display: flex;
@@ -2793,6 +2834,16 @@ section[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"][href*="{act
             with out_col:
                 if st.button("Sign out", type="primary", width="stretch", key="sign_out"):
                     logout()
+
+    # Phone page switcher — sidebar >> control is easy to miss / unreliable on iOS
+    st.markdown(
+        '<div class="pd-mobile-nav-anchor" aria-hidden="true"></div>',
+        unsafe_allow_html=True,
+    )
+    m_cols = st.columns(len(NAV_LINKS), gap="small")
+    for col, (path_name, label, _key, icon) in zip(m_cols, NAV_LINKS):
+        with col:
+            st.page_link(path_name, label=label, icon=icon)
 
     render_guided_tour_if_needed()
     return True
